@@ -17,11 +17,20 @@ models:
     max_context: 2048
     status: baseline
 
-  - name: YOLOv11
+  - name: YOLOv11n-INT8-Baseline
     task: object-detection
     backend: rknn
-    source_dir: experiments/yolo11_prune
-    runtime_model: null
+    source_dir: models/vision/yolo11
+    runtime_model: models/vision/yolo11/rknn/yolo11n_baseline_i8_rk3588.rknn
     quantization: INT8
     input_size: [640, 640]
-    status: todo
+    status: ready
+
+  - name: YOLOv11n-INT8-Slim016-Init
+    task: object-detection
+    backend: rknn
+    source_dir: models/vision/yolo11
+    runtime_model: models/vision/yolo11/rknn/yolo11n_slim_width016_init_i8_rk3588.rknn
+    quantization: INT8
+    input_size: [640, 640]
+    status: experimental
