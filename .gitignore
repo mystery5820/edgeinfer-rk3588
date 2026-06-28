@@ -36,3 +36,5 @@ delete_candidates/
 /models/
 /third_party/
 /experiments/
+/dist/
+*.tar.gz
