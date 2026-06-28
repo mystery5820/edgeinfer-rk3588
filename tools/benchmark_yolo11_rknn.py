@@ -3,9 +3,10 @@
 
 import argparse
 import csv
+import sys
 import time
 from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import List, Tuple
 
 import numpy as np
 
@@ -21,9 +22,12 @@ except ImportError:
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(PROJECT_ROOT))
+
+from server.vision.yolo_postprocess import postprocess_yolo_outputs
+
+
 REGISTRY_PATH = PROJECT_ROOT / "configs" / "model_registry.yaml"
-
-
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".bmp"}
 
 
@@ -84,11 +88,38 @@ def preprocess_image(image_path: Path, input_size: Tuple[int, int], add_batch: b
     return img
 
 
+def make_fake_yolo_output() -> np.ndarray:
+    """
+    Fake YOLO output for dry-run mode.
+    Shape: [1, 84, 4]
+    It should produce 2 detections after NMS.
+    """
+    num_classes = 80
+    num_boxes = 4
+    channels = 4 + num_classes
+
+    pred = np.zeros((1, channels, num_boxes), dtype=np.float32)
+
+    pred[0, 0:4, 0] = [100, 100, 80, 80]
+    pred[0, 4 + 0, 0] = 0.95
+
+    pred[0, 0:4, 1] = [105, 105, 80, 80]
+    pred[0, 4 + 0, 1] = 0.80
+
+    pred[0, 0:4, 2] = [300, 300, 60, 60]
+    pred[0, 4 + 2, 2] = 0.90
+
+    pred[0, 0:4, 3] = [500, 500, 50, 50]
+    pred[0, 4 + 1, 3] = 0.10
+
+    return pred
+
+
 class DryRunRuntime:
     name = "dryrun"
 
     def infer(self, input_tensor):
-        return []
+        return [make_fake_yolo_output()]
 
     def release(self):
         pass
@@ -191,11 +222,15 @@ def write_csv(rows, output_path: Path):
         "input_size",
         "add_batch",
         "model_size_mb",
+        "conf_thres",
+        "iou_thres",
         "preprocess_ms",
         "inference_ms",
         "postprocess_ms",
         "end_to_end_ms",
         "fps",
+        "num_outputs",
+        "num_detections",
         "ok",
         "error",
     ]
@@ -219,20 +254,22 @@ def summarize(rows):
     avg_inf = avg("inference_ms")
     avg_post = avg("postprocess_ms")
     avg_e2e = avg("end_to_end_ms")
+    avg_det = avg("num_detections")
     fps = 1000.0 / avg_e2e if avg_e2e > 0 else 0.0
 
     print("\n========== YOLOv11 Benchmark Summary ==========")
-    print(f"Valid samples      : {len(valid)}")
-    print(f"Avg preprocess ms  : {avg_pre:.3f}")
-    print(f"Avg inference ms   : {avg_inf:.3f}")
-    print(f"Avg postprocess ms : {avg_post:.3f}")
-    print(f"Avg e2e ms         : {avg_e2e:.3f}")
-    print(f"Estimated FPS      : {fps:.2f}")
+    print(f"Valid samples       : {len(valid)}")
+    print(f"Avg preprocess ms   : {avg_pre:.3f}")
+    print(f"Avg inference ms    : {avg_inf:.3f}")
+    print(f"Avg postprocess ms  : {avg_post:.3f}")
+    print(f"Avg e2e ms          : {avg_e2e:.3f}")
+    print(f"Estimated FPS       : {fps:.2f}")
+    print(f"Avg detections      : {avg_det:.2f}")
     print("===============================================")
 
 
 def main():
-    parser = argparse.ArgumentParser(description="YOLOv11 RKNN benchmark scaffold.")
+    parser = argparse.ArgumentParser(description="YOLOv11 RKNN benchmark with postprocess.")
     parser.add_argument("--model", default="YOLOv11n-INT8-Baseline")
     parser.add_argument("--image-dir", default="datasets/coco128/images/train2017")
     parser.add_argument("--runtime", default="dryrun", choices=["dryrun", "auto", "rknnlite", "rknnapi"])
@@ -240,6 +277,8 @@ def main():
     parser.add_argument("--warmup", type=int, default=3)
     parser.add_argument("--repeat", type=int, default=5)
     parser.add_argument("--add-batch", action="store_true")
+    parser.add_argument("--conf-thres", type=float, default=0.25)
+    parser.add_argument("--iou-thres", type=float, default=0.45)
     parser.add_argument("--output", default="results/benchmark/yolo11_benchmark.csv")
     args = parser.parse_args()
 
@@ -261,6 +300,8 @@ def main():
     print(f"Images      : {len(images)}")
     print(f"Input size  : {input_size}")
     print(f"Add batch   : {args.add_batch}")
+    print(f"Conf thres  : {args.conf_thres}")
+    print(f"IoU thres   : {args.iou_thres}")
     print("======================================")
 
     runtime = create_runtime(args.runtime, model_path)
@@ -287,27 +328,38 @@ def main():
                     "input_size": f"{input_size[0]}x{input_size[1]}",
                     "add_batch": str(args.add_batch).lower(),
                     "model_size_mb": f"{model_size:.3f}",
+                    "conf_thres": f"{args.conf_thres:.3f}",
+                    "iou_thres": f"{args.iou_thres:.3f}",
                     "preprocess_ms": "0.000",
                     "inference_ms": "0.000",
                     "postprocess_ms": "0.000",
                     "end_to_end_ms": "0.000",
                     "fps": "0.000",
+                    "num_outputs": "0",
+                    "num_detections": "0",
                     "ok": "false",
                     "error": "",
                 }
 
                 try:
                     t0 = time.perf_counter()
+
                     t_pre0 = time.perf_counter()
                     input_tensor = preprocess_image(image_path, input_size, args.add_batch)
                     t_pre1 = time.perf_counter()
 
                     t_inf0 = time.perf_counter()
-                    runtime.infer(input_tensor)
+                    outputs = runtime.infer(input_tensor)
                     t_inf1 = time.perf_counter()
 
                     t_post0 = time.perf_counter()
-                    # Placeholder: YOLO decode + NMS will be implemented later.
+                    detections = postprocess_yolo_outputs(
+                        outputs=outputs,
+                        conf_thres=args.conf_thres,
+                        iou_thres=args.iou_thres,
+                        box_format="xywh",
+                        input_size=input_size,
+                    )
                     t_post1 = time.perf_counter()
 
                     t1 = time.perf_counter()
@@ -324,6 +376,8 @@ def main():
                         "postprocess_ms": f"{postprocess_ms:.3f}",
                         "end_to_end_ms": f"{e2e_ms:.3f}",
                         "fps": f"{fps:.3f}",
+                        "num_outputs": str(len(outputs) if outputs is not None else 0),
+                        "num_detections": str(len(detections)),
                         "ok": "true",
                     })
 
