@@ -45,7 +45,6 @@ def load_rows(csv_path: Path):
         for row in reader:
             if row.get("ok") != "true":
                 continue
-
             rows.append(row)
 
     return rows
@@ -65,16 +64,18 @@ def summarize_group(rows):
         "postprocess_ms",
         "end_to_end_ms",
         "fps",
+        "num_detections",
     ]
 
     summary = {
         "count": len(rows),
         "model_size_mb": to_float(rows[0], "model_size_mb") if rows else 0.0,
+        "conf_thres": rows[0].get("conf_thres", "-") if rows else "-",
+        "iou_thres": rows[0].get("iou_thres", "-") if rows else "-",
     }
 
     for metric in metrics:
         values = [to_float(r, metric) for r in rows]
-
         summary[f"{metric}_avg"] = mean(values) if values else 0.0
         summary[f"{metric}_p50"] = median(values) if values else 0.0
         summary[f"{metric}_p95"] = percentile(values, 95) if values else 0.0
@@ -90,27 +91,33 @@ def write_markdown(grouped, output_path: Path):
         f.write("该报告由 `tools/summarize_yolo_benchmark.py` 自动生成。\n\n")
 
         f.write("## Summary Table\n\n")
-        f.write("| Model | Runtime | Samples | Model Size MB | Preprocess Avg ms | Inference Avg ms | E2E Avg ms | E2E P50 ms | E2E P95 ms | FPS Avg |\n")
-        f.write("|---|---|---:|---:|---:|---:|---:|---:|---:|---:|\n")
+        f.write("| Model | Runtime | Samples | Model Size MB | Conf | IoU | Preprocess Avg ms | Inference Avg ms | Postprocess Avg ms | E2E Avg ms | E2E P50 ms | E2E P95 ms | FPS Avg | Avg Detections |\n")
+        f.write("|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|\n")
 
         for (model, runtime), rows in sorted(grouped.items()):
             s = summarize_group(rows)
             f.write(
                 f"| {model} | {runtime} | {s['count']} | "
                 f"{s['model_size_mb']:.3f} | "
+                f"{s['conf_thres']} | "
+                f"{s['iou_thres']} | "
                 f"{s['preprocess_ms_avg']:.3f} | "
                 f"{s['inference_ms_avg']:.3f} | "
+                f"{s['postprocess_ms_avg']:.3f} | "
                 f"{s['end_to_end_ms_avg']:.3f} | "
                 f"{s['end_to_end_ms_p50']:.3f} | "
                 f"{s['end_to_end_ms_p95']:.3f} | "
-                f"{s['fps_avg']:.2f} |\n"
+                f"{s['fps_avg']:.2f} | "
+                f"{s['num_detections_avg']:.2f} |\n"
             )
 
         f.write("\n## Notes\n\n")
         f.write("- dryrun 模式不代表真实 RK3588 NPU 性能。\n")
-        f.write("- dryrun 主要用于验证模型注册表、图片读取、预处理和 CSV 输出流程。\n")
+        f.write("- dryrun 主要用于验证模型注册表、图片读取、预处理、后处理和 CSV 输出流程。\n")
+        f.write("- 当前 Benchmark 已接入 Python / NumPy 版本 YOLO decode + NMS 后处理。\n")
         f.write("- 真正的 inference_ms 需要在 RK3588 板端使用 rknnlite runtime 测试。\n")
-        f.write("- 当前后处理仍是占位，后续需要加入 YOLO decode 和 NMS。\n")
+        f.write("- 后续需要在板端确认 RKNN 输出 shape，并根据实际输出格式调整后处理。\n")
+        f.write("- 后续优化方向是将 Python 后处理迁移为 C++ 后处理，并加入摄像头端到端 Benchmark。\n")
 
 
 def main():
