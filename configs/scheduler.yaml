@@ -1,0 +1,16 @@
+scheduler:
+  max_concurrent_llm: 1
+  llm_queue_size: 4
+  request_timeout_sec: 60
+
+vision:
+  default_fps: 20
+  degraded_fps: 10
+  degrade_when_llm_running: true
+  drop_old_frame: true
+  camera_queue_size: 4
+
+resource_guard:
+  enable: true
+  memory_limit_mb: 7000
+  temperature_limit_celsius: 80

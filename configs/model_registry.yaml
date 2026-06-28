@@ -1,0 +1,27 @@
+models:
+  - name: Qwen2.5-0.5B-Instruct
+    task: text-generation
+    backend: rkllm
+    source_dir: models/llm/baseline/Qwen2.5-0.5B-Instruct
+    runtime_model: models/llm/rkllm_outputs/qwen2_5_0_5b_instruct_w8a8_opt1_ctx2048_rk3588.rkllm
+    quantization: W8A8
+    max_context: 2048
+    status: baseline
+
+  - name: Qwen2.5-1.5B-Instruct
+    task: text-generation
+    backend: rkllm
+    source_dir: models/llm/baseline/Qwen2.5-1.5B-Instruct
+    runtime_model: models/llm/rkllm_outputs/qwen2_5_1_5b_instruct_w8a8_opt1_ctx2048_rk3588.rkllm
+    quantization: W8A8
+    max_context: 2048
+    status: baseline
+
+  - name: YOLOv11
+    task: object-detection
+    backend: rknn
+    source_dir: experiments/yolo11_prune
+    runtime_model: null
+    quantization: INT8
+    input_size: [640, 640]
+    status: todo

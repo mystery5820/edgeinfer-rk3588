@@ -1,0 +1,22 @@
+benchmark:
+  output_dir: ./results/benchmark
+
+llm:
+  models:
+    - Qwen2.5-0.5B-Instruct
+    - Qwen2.5-1.5B-Instruct
+  max_new_tokens: 128
+  warmup_rounds: 1
+  test_rounds: 3
+
+vision:
+  models:
+    - yolo11
+  image_size: 640
+  warmup_rounds: 5
+  test_rounds: 50
+
+metrics:
+  collect_cpu: true
+  collect_memory: true
+  collect_temperature: true

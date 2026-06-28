@@ -1,0 +1,9 @@
+name: model_name
+task: text-generation | object-detection | vision-language
+backend: rkllm | rknn
+version: 1.0.0
+quantization: INT8 | W8A8 | W4A16
+npu_core: 0_1_2
+input_size: null
+max_context: 4096
+description: model description

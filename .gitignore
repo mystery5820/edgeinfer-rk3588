@@ -1,0 +1,32 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+.venv/
+venv/
+
+# Logs and results
+results/logs/*
+results/benchmark/*
+*.log
+*.csv
+
+# Large models
+*.safetensors
+*.bin
+*.pt
+*.pth
+*.onnx
+*.rknn
+*.rkllm
+
+# Cache
+.cache/
+.DS_Store
+
+# Temporary
+tmp/
+temp/
+delete_candidates/

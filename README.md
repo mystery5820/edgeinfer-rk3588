@@ -1,0 +1,33 @@
+# EdgeInfer-RK3588
+
+基于 RK3588 NPU 的端侧多模型推理服务框架。
+
+## 项目定位
+
+本项目面向端侧 AI Infra、模型部署优化与推理系统方向，基于 RK3588 NPU 构建一个支持视觉检测、端侧 LLM、视觉语言模型、多模型调度、自动化 Benchmark 和工程化部署的小型推理服务框架。
+
+## 当前目标
+
+- YOLOv11 实时视觉检测
+- Qwen2.5 / Qwen3 系列端侧 LLM 推理
+- VLM 图文问答扩展
+- RKNN / RKLLM 多后端统一封装
+- 模型包管理
+- OpenAI-like API
+- 自动化 Benchmark
+- 多模型调度与资源监控
+- systemd 工程化部署
+
+## 目录说明
+
+- datasets：数据集
+- models/vision：视觉模型
+- models/llm：大语言模型
+- models/vlm：视觉语言模型
+- experiments：历史实验与优化实验
+- server：推理服务框架代码
+- cpp：C++ 推理与后处理代码
+- tools：转换、量化、Benchmark 工具
+- third_party：RKNN / RKLLM 官方工具包
+- results：Benchmark 与日志结果
+- envs：Python 环境依赖记录
