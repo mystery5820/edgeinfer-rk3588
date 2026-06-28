@@ -54,8 +54,6 @@ echo "[5/6] Copy RKNN models..."
 cp models/vision/yolo11/rknn/yolo11n_baseline_i8_rk3588.rknn \
   "${PACKAGE_DIR}/models/vision/yolo11/rknn/"
 
-cp models/vision/yolo11/rknn/yolo11n_slim_width016_init_i8_rk3588.rknn \
-  "${PACKAGE_DIR}/models/vision/yolo11/rknn/"
 
 echo "[6/6] Copy sample images..."
 if [ -d datasets/coco128/images/train2017 ]; then
@@ -90,10 +88,6 @@ echo "Create README_BOARD.md..."
   echo "## Run baseline"
   echo
   echo "bash scripts/run_board_yolo_benchmark.sh YOLOv11n-INT8-Baseline"
-  echo
-  echo "## Run slim016"
-  echo
-  echo "bash scripts/run_board_yolo_benchmark.sh YOLOv11n-INT8-Slim016-Init"
   echo
   echo "## Output"
   echo
