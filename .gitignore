@@ -30,3 +30,9 @@ results/benchmark/*
 tmp/
 temp/
 delete_candidates/
+
+# Local assets, datasets, models and third-party SDKs
+/datasets/
+/models/
+/third_party/
+/experiments/
