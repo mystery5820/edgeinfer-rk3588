@@ -163,3 +163,55 @@ Git 仓库中只保留：
 大文件继续统一放在：
 
 - /userdata/edgeinfer-assets
+
+## 10. 自动化 Benchmark 结果
+
+在交互式验证通过后，项目新增了非交互式 RKLLM benchmark 脚本：
+
+- scripts/run_board_llm_benchmark.py
+
+该脚本通过伪终端方式启动 RKLLM demo，自动输入测试 prompt，解析 RKLLM 输出日志，并生成 CSV 结果文件。
+
+本次 benchmark 使用模型：
+
+- Qwen2.5-0.5B-Instruct
+
+运行参数：
+
+- max_new_tokens = 512
+- max_context = 2048
+
+测试 prompt 包括：
+
+- identity
+- rk3588_intro
+- edge_ai
+- python_sort
+
+板端运行命令：
+
+    python3 scripts/run_board_llm_benchmark.py --model Qwen2.5-0.5B-Instruct --max-new-tokens 512 --max-context 2048
+
+结果文件已保存为：
+
+- benchmark_results/llm_qwen25_0_5b/llm_benchmark.csv
+
+本次 benchmark 结果如下：
+
+| prompt_name | model_init_ms | prefill_tps | generate_tps | peak_memory_mb |
+|---|---:|---:|---:|---:|
+| identity | 717.14 | 340.77 | 22.17 | 674.14 |
+| rk3588_intro | 693.75 | 268.05 | 21.55 | 674.43 |
+| edge_ai | 834.60 | 401.19 | 21.70 | 673.99 |
+| python_sort | 744.80 | 264.22 | 21.73 | 674.31 |
+
+平均结果：
+
+- 平均初始化时间：约 747.57 ms
+- 平均 Prefill 速度：约 318.56 tokens/s
+- 平均 Generate 速度：约 21.79 tokens/s
+- 平均峰值内存：约 674.22 MB
+
+结论：
+
+Qwen2.5-0.5B-Instruct 在 RK3588 上的 RKLLM W8A8 推理速度较稳定，四个 prompt 的生成速度基本维持在 21 到 22 tokens/s，峰值内存稳定在约 674 MB。该结果可作为后续 Qwen2.5-1.5B-Instruct 板端部署和性能对比的 baseline。
