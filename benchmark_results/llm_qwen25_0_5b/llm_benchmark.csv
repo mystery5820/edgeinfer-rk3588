@@ -1,0 +1,5 @@
+model,prompt_name,prompt,model_init_ms,prefill_total_ms,prefill_tokens,prefill_ms_per_token,prefill_tokens_per_second,generate_total_ms,generate_tokens,generate_ms_per_token,generate_tokens_per_second,peak_memory_mb,raw_log
+Qwen2.5-0.5B-Instruct,identity,请用一句话说明你当前正在运行在哪类硬件平台上。,717.14,123.25,42,2.93,340.77,2526.08,56,45.11,22.17,674.14,/home/linaro/edgeinfer-rk3588-board/benchmark_results/llm_qwen25_0_5b/raw_logs/identity.log
+Qwen2.5-0.5B-Instruct,rk3588_intro,请用三句话介绍 RK3588 的主要特点。,693.75,160.42,43,3.73,268.05,5847.37,126,46.41,21.55,674.43,/home/linaro/edgeinfer-rk3588-board/benchmark_results/llm_qwen25_0_5b/raw_logs/rk3588_intro.log
+Qwen2.5-0.5B-Instruct,edge_ai,请用三句话说明边缘 AI 推理部署的意义。,834.6,104.69,42,2.49,401.19,3317.54,72,46.08,21.7,673.99,/home/linaro/edgeinfer-rk3588-board/benchmark_results/llm_qwen25_0_5b/raw_logs/edge_ai.log
+Qwen2.5-0.5B-Instruct,python_sort,请用 Python 写一个冒泡排序函数，只输出代码。,744.8,166.53,44,3.78,264.22,10586.39,230,46.03,21.73,674.31,/home/linaro/edgeinfer-rk3588-board/benchmark_results/llm_qwen25_0_5b/raw_logs/python_sort.log
