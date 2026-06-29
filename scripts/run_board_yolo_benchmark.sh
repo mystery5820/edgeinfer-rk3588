@@ -4,7 +4,7 @@ set -e
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${PROJECT_ROOT}"
 
-MODEL_NAME="${1:-YOLOv11n-INT8-Baseline}"
+MODEL_NAME="${1:-YOLOv11n-FP-Baseline}"
 IMAGE_DIR="${2:-datasets/coco128/images/train2017}"
 OUTPUT_PATH="${3:-results/benchmark/yolo11_board_benchmark.csv}"
 
@@ -25,6 +25,7 @@ python3 tools/benchmark_yolo11_rknn.py \
   --image-dir "${IMAGE_DIR}" \
   --limit 50 \
   --repeat 5 \
+  --add-batch \
   --output "${OUTPUT_PATH}"
 
 python3 tools/summarize_yolo_benchmark.py \

@@ -24,4 +24,14 @@ models:
     runtime_model: models/vision/yolo11/rknn/yolo11n_baseline_i8_rk3588.rknn
     quantization: INT8
     input_size: [640, 640]
+    status: debug
+    note: "INT8 RKNN 可加载并推理，但当前板端验证中类别分支输出全为 0，暂不作为有效部署模型。"
+
+  - name: YOLOv11n-FP-Baseline
+    task: object-detection
+    backend: rknn
+    source_dir: models/vision/yolo11
+    runtime_model: models/vision/yolo11/rknn/yolo11n_baseline_fp_rk3588.rknn
+    quantization: FP
+    input_size: [640, 640]
     status: ready
