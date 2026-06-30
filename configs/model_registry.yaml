@@ -28,7 +28,7 @@ models:
     quantization: W8A8
     max_context: 4096
     status: blocked
-    note: "RKLLM 模型文件已下载并通过 SHA256 校验，但在 RK3588 板端 RKNPU driver v0.9.2 环境下初始化失败，错误为 failed to malloc npu memory size 4022272000。需要升级 RKNPU driver 后再验证。"
+    note: "模型文件已下载并通过 SHA256 校验。RKNPU driver 已由 v0.9.2 升级到 v0.9.8，driver-too-low 问题已解除；DRM_GEM 稳定版下 RKLLM 可正常运行 Qwen2.5-1.5B，但 Qwen3-4B 仍因 4022272000 bytes NPU DMA/IOVA 映射失败而无法加载。DMA_HEAP 实验版可启动但 RKLLM runtime v1.3.0 无法打开 RKNPU/RKNN 设备，因此该模型当前保持 blocked。"
 
   - name: YOLOv11n-INT8-Baseline
     task: object-detection
