@@ -2,6 +2,9 @@ scheduler:
   max_concurrent_llm: 1
   llm_queue_size: 4
   request_timeout_sec: 60
+  max_concurrent_vision: 1
+  queue_size: 4
+  request_timeout_seconds: 60
 
 vision:
   default_fps: 20
@@ -14,3 +17,8 @@ resource_guard:
   enable: true
   memory_limit_mb: 7000
   temperature_limit_celsius: 80
+
+policies:
+  qwen3_4b_requires_clean_rknpu: true
+  reject_llm_when_npu_busy: true
+  allow_yolo_llm_concurrent: false

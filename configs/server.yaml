@@ -1,6 +1,8 @@
 server:
+  name: edgeinfer-rk3588-serving
+  version: phase9-mvp
   host: 0.0.0.0
-  port: 8080
+  port: 8000
   log_level: info
 
 runtime:
@@ -8,8 +10,21 @@ runtime:
   enable_vision: true
   enable_llm: true
   enable_vlm: false
+  rkllm_backend: subprocess
+  rkllm_command_template: ""
+  fake_llm: false
 
 paths:
   model_root: ./models
   result_root: ./results
   log_root: ./results/logs
+  model_registry: configs/model_registry.yaml
+  assets_root: /userdata/edgeinfer-assets
+
+llm:
+  default_model: qwen3-4b-rkllm-all-npu
+  max_concurrent_llm: 1
+  queue_size: 4
+  timeout_seconds: 60
+  max_new_tokens_limit: 256
+  ctx_limit: 1024
