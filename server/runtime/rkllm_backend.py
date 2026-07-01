@@ -117,6 +117,29 @@ class RKLLMBackend:
             cls._worker_key = key
             return cls._worker
 
+    @classmethod
+    def worker_runtime_snapshot(cls) -> Dict[str, Any]:
+        with cls._worker_guard:
+            if cls._worker is None:
+                return {
+                    "started": False,
+                    "pid": None,
+                    "startup_ms": None,
+                    "request_count": 0,
+                    "failed_request_count": 0,
+                    "last_latency_ms": None,
+                    "last_error": None,
+                    "restart_count": 0,
+                    "started_at": None,
+                    "last_started_at": None,
+                    "last_finished_at": None,
+                    "model_path": None,
+                    "ctx": None,
+                    "max_new_tokens": None,
+                }
+
+            return cls._worker.snapshot()
+
     def _generate_with_worker(
         self,
         *,

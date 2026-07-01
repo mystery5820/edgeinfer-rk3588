@@ -6,6 +6,7 @@ import time
 
 from fastapi import APIRouter
 
+from server.runtime.rkllm_backend import RKLLMBackend
 from server.scheduler.request_queue import llm_queue
 
 router = APIRouter(prefix="/v1", tags=["metrics"])
@@ -29,6 +30,9 @@ def _rkllm_backend_snapshot() -> dict:
             "EDGEINFER_RKLLM_WORKER_BIN",
             "/home/linaro/edgeinfer-rk3588-board/tools/rkllm_enhanced/"
             "rkllm_enhanced_no_template_no_history",
+        ),
+        "worker_runtime": (
+            RKLLMBackend.worker_runtime_snapshot() if worker_enabled else None
         ),
     }
 

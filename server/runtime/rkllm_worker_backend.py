@@ -59,7 +59,16 @@ class RKLLMPersistentWorker:
 
         self.proc: subprocess.Popen[bytes] | None = None
         self.startup_ms: float = 0.0
+        self.started_at: float | None = None
+        self.last_started_at: float | None = None
+        self.last_finished_at: float | None = None
+        self.request_count: int = 0
+        self.failed_request_count: int = 0
+        self.last_latency_ms: float | None = None
+        self.last_error: str | None = None
+        self._start_count: int = 0
         self._lock = threading.Lock()
+        self._stats_lock = threading.Lock()
 
     @staticmethod
     def _set_nonblocking(fd: int) -> None:
@@ -211,6 +220,11 @@ class RKLLMPersistentWorker:
 
         self.startup_ms = round((time.time() - start) * 1000.0, 3)
 
+        with self._stats_lock:
+            self._start_count += 1
+            self.started_at = start
+            self.last_error = None
+
         if "loading rkllm model" not in startup_log:
             raise RuntimeError(
                 "worker started but startup log did not contain model loading marker"
@@ -231,25 +245,69 @@ class RKLLMPersistentWorker:
             self._drain_stdout(timeout_s=0.3)
 
             start = time.time()
+            with self._stats_lock:
+                self.last_started_at = start
+                self.last_finished_at = None
+                self.last_error = None
 
-            self.proc.stdin.write((prompt_line + "\n").encode("utf-8"))
-            self.proc.stdin.flush()
+            try:
+                self.proc.stdin.write((prompt_line + "\n").encode("utf-8"))
+                self.proc.stdin.flush()
 
-            raw = self._read_until(
-                markers=("<|im_end|>", "\r\nYou:", "\nYou:"),
-                timeout_s=timeout,
-                label="worker response",
-            )
+                raw = self._read_until(
+                    markers=("<|im_end|>", "\r\nYou:", "\nYou:"),
+                    timeout_s=timeout,
+                    label="worker response",
+                )
 
-            latency_ms = round((time.time() - start) * 1000.0, 3)
+                latency_ms = round((time.time() - start) * 1000.0, 3)
+                text = self._clean_response(raw)
 
-            return WorkerGenerateResult(
-                text=self._clean_response(raw),
-                latency_ms=latency_ms,
-                backend="rkllm-persistent-worker",
-                startup_ms=self.startup_ms,
-                model_path=self.model_path,
-            )
+                with self._stats_lock:
+                    self.request_count += 1
+                    self.last_latency_ms = latency_ms
+                    self.last_finished_at = time.time()
+                    self.last_error = None
+
+                return WorkerGenerateResult(
+                    text=text,
+                    latency_ms=latency_ms,
+                    backend="rkllm-persistent-worker",
+                    startup_ms=self.startup_ms,
+                    model_path=self.model_path,
+                )
+
+            except Exception as exc:
+                latency_ms = round((time.time() - start) * 1000.0, 3)
+                with self._stats_lock:
+                    self.request_count += 1
+                    self.failed_request_count += 1
+                    self.last_latency_ms = latency_ms
+                    self.last_finished_at = time.time()
+                    self.last_error = str(exc)
+                raise
+
+    def snapshot(self) -> dict:
+        proc = self.proc
+        started = proc is not None and proc.poll() is None
+
+        with self._stats_lock:
+            return {
+                "started": started,
+                "pid": proc.pid if started and proc is not None else None,
+                "startup_ms": self.startup_ms if self.startup_ms else None,
+                "request_count": self.request_count,
+                "failed_request_count": self.failed_request_count,
+                "last_latency_ms": self.last_latency_ms,
+                "last_error": self.last_error,
+                "restart_count": max(0, self._start_count - 1),
+                "started_at": self.started_at,
+                "last_started_at": self.last_started_at,
+                "last_finished_at": self.last_finished_at,
+                "model_path": self.model_path,
+                "ctx": self.ctx,
+                "max_new_tokens": self.max_new_tokens,
+            }
 
     def stop(self) -> None:
         proc = self.proc
