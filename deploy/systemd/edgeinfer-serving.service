@@ -1,0 +1,24 @@
+[Unit]
+Description=EdgeInfer RK3588 Serving API
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=linaro
+Group=linaro
+WorkingDirectory=/home/linaro/edgeinfer-rk3588-board
+
+Environment=PYTHONUNBUFFERED=1
+Environment=EDGEINFER_ASSETS_ROOT=/userdata/edgeinfer-assets
+
+ExecStart=/home/linaro/edgeinfer-rk3588-board/.venv-serving/bin/python -m uvicorn server.main:app --host 0.0.0.0 --port 8000
+
+Restart=on-failure
+RestartSec=3
+
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
