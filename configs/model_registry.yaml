@@ -48,3 +48,39 @@ models:
     quantization: FP
     input_size: [640, 640]
     status: ready
+
+# Qwen3-4B RKLLM board validation notes
+qwen3_4b_rkllm_status:
+  all_npu:
+    status: runnable
+    recommended: true
+    model_file: Qwen3-4B-w8a8-npu.rkllm
+    runtime: rkllm-runtime-v1.3.0
+    rknpu_driver: v0.9.8
+    memory_manager: DRM_GEM
+    cma: 512MiB
+    ctx: 1024
+    max_new_tokens: 128
+    init_ms: 3759.09
+    prefill_tps: 49.83
+    generate_tps: 4.14
+    peak_memory_mb: 4182.84
+    requirement: clean RKNPU environment, no old qwen-web-chat or yolov5-web demo services
+  hybrid:
+    status: runnable
+    recommended: false
+    model_file: Qwen3-4B-w8a8-hybrid.rkllm
+    runtime: rkllm-runtime-v1.3.0
+    rknpu_driver: v0.9.8
+    memory_manager: DRM_GEM
+    cma: 512MiB
+    ctx: 1024
+    max_new_tokens: 128
+    init_ms: 16665.54
+    prefill_tps: 39.51
+    generate_tps: 3.79
+    peak_memory_mb: 4342.63
+    requirement: clean RKNPU environment, no old qwen-web-chat or yolov5-web demo services
+  root_cause:
+    previous_failure: old qwen-web-chat.service and yolov5-web.service occupied RKNPU/DRM/IOVA space
+    fixed_by: disabling legacy AI demo services and using clean RKNPU environment

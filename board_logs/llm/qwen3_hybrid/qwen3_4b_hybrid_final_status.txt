@@ -1,0 +1,27 @@
+Qwen3-4B Hybrid Final Board Status
+
+Date:
+2026年 07月 01日 星期三 06:37:59 UTC
+
+Kernel:
+Linux ATK-DLRK3588 5.10.209-g16b8cb7e2392-dirty #3 SMP Wed Jul 1 10:13:08 CST 2026 aarch64 GNU/Linux
+
+Disabled services:
+qwen-web-chat.service: disabled
+yolov5-web.service: disabled
+
+CMA:
+MemTotal:       16335440 kB
+MemFree:        11363384 kB
+MemAvailable:   15587504 kB
+CmaTotal:         524288 kB
+CmaFree:          516992 kB
+
+Old AI demo processes:
+
+
+Debug logs:
+no debug iova logs
+
+Final benchmark log:
+logs/llm/qwen3_hybrid/qwen3_4b_hybrid_ctx1024_new128_clean_kernel_final.log
