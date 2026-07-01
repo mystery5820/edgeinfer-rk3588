@@ -6,6 +6,7 @@ MODEL_ID="${EDGEINFER_MODEL_ID:-qwen3-4b-rkllm-all-npu}"
 
 RUN_CHAT="${EDGEINFER_SMOKE_CHAT:-1}"
 RUN_BUSY="${EDGEINFER_SMOKE_BUSY:-1}"
+EXPECT_BACKEND="${EDGEINFER_EXPECT_BACKEND:-}"
 
 TMP_DIR="$(mktemp -d /tmp/edgeinfer_smoke_XXXXXX)"
 trap 'rm -rf "${TMP_DIR}"' EXIT
@@ -15,6 +16,7 @@ echo "BOARD_URL=${BOARD_URL}"
 echo "MODEL_ID=${MODEL_ID}"
 echo "RUN_CHAT=${RUN_CHAT}"
 echo "RUN_BUSY=${RUN_BUSY}"
+echo "EXPECT_BACKEND=${EXPECT_BACKEND:-<not checked>}"
 echo
 
 curl_json() {
@@ -48,6 +50,35 @@ curl_json() {
   fi
 }
 
+assert_backend() {
+  local json_file="$1"
+  local expected_backend="$2"
+  local label="$3"
+
+  if [ -z "${expected_backend}" ]; then
+    return 0
+  fi
+
+  local actual_backend
+  actual_backend="$(
+    python3 -c '
+import json
+import sys
+from pathlib import Path
+
+data = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+print(data.get("edgeinfer", {}).get("backend", ""))
+' "${json_file}"
+  )"
+
+  if [ "${actual_backend}" != "${expected_backend}" ]; then
+    echo "ERROR: ${label} backend mismatch: expected ${expected_backend}, got ${actual_backend}" >&2
+    exit 1
+  fi
+
+  echo "backend check OK: ${label}: ${actual_backend}"
+}
+
 echo "=== 1. health ==="
 curl_json GET "${BOARD_URL}/v1/health"
 
@@ -73,6 +104,7 @@ if [ "${RUN_CHAT}" = "1" ]; then
 JSON
 
   curl_json POST "${BOARD_URL}/v1/chat/completions" "${CHAT_REQ}"
+  assert_backend "${TMP_DIR}/response.json" "${EXPECT_BACKEND}" "single chat"
 else
   echo "=== 4. single chat completion skipped ==="
 fi
@@ -159,6 +191,8 @@ JSON
     echo "ERROR: expected first request to return HTTP 200, got ${CODE1_VALUE}" >&2
     exit 1
   fi
+
+  assert_backend "${OUT1}" "${EXPECT_BACKEND}" "busy first request"
 else
   echo "=== 6. busy rejection test skipped ==="
 fi
