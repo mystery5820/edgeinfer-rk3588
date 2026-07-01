@@ -47,6 +47,17 @@ def render_prompt(messages: List[ChatMessage]) -> str:
     return "\n".join(lines)
 
 
+def _configured_rkllm_backend_name() -> str:
+    if os.environ.get("EDGEINFER_FAKE_LLM", "0") == "1":
+        return "fake"
+
+    mode = os.environ.get("EDGEINFER_RKLLM_BACKEND_MODE", "oneshot").strip().lower()
+    if mode in {"worker", "persistent", "persistent-worker"}:
+        return "rkllm-persistent-worker"
+
+    return "rkllm-runner"
+
+
 def _error_detail(
     *,
     code: str,
@@ -63,7 +74,7 @@ def _error_detail(
         },
         "edgeinfer": {
             "model": model_id,
-            "backend": "rkllm-runner",
+            "backend": _configured_rkllm_backend_name(),
             "llm": llm_queue.snapshot(),
         },
     }
