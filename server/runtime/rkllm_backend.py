@@ -7,6 +7,8 @@ import time
 from pathlib import Path
 from typing import Any, Dict
 
+from server.runtime.prompt_policy import build_serving_prompt
+
 
 class RKLLMBackend:
     def __init__(self):
@@ -50,14 +52,10 @@ class RKLLMBackend:
         """
         Phase 9 MVP prompt wrapper.
 
-        Qwen3-4B 在 no-template RKLLM 后端下对 /no_think 更稳定。
-        这里默认要求只输出最终答案，避免思考过程、自我检查和特殊符号。
+        Use prompt_policy to inject stable RK3588 facts for hardware-related
+        questions and reduce hallucinated vendor/specification claims.
         """
-        return (
-            "/no_think "
-            "请只输出最终答案，不要输出思考过程、解释、注释或特殊符号。\n"
-            f"{prompt}"
-        )
+        return build_serving_prompt(prompt)
 
     @staticmethod
     def _extract_clean_text(stdout: str) -> str:

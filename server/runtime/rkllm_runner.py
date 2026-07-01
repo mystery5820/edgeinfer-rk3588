@@ -154,10 +154,12 @@ def main() -> int:
     cmd = [args.bin, args.model, str(args.ctx), str(args.max_new)]
     start = time.time()
 
+    prompt_line = " ".join(args.prompt.replace("\r", " ").replace("\n", " ").split())
+
     try:
         proc = subprocess.run(
             cmd,
-            input=args.prompt + "\n",
+            input=prompt_line + "\n",
             text=True,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
