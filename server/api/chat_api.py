@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 import time
 import uuid
-from typing import List, Literal, Optional
+from typing import List, Literal, Optional, Union
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
@@ -33,6 +33,7 @@ class ChatCompletionRequest(BaseModel):
     max_tokens: Optional[int] = Field(default=None, ge=1, le=256)
     temperature: float = Field(default=0.7, ge=0.0, le=2.0)
     stream: bool = False
+    stop: Optional[Union[str, List[str]]] = None
 
 
 def render_prompt(messages: List[ChatMessage]) -> str:
@@ -109,6 +110,49 @@ def _effective_max_new_tokens(req: ChatCompletionRequest) -> int:
     return int(req.max_new_tokens)
 
 
+def _normalize_stop_sequences(req: ChatCompletionRequest) -> List[str]:
+    if req.stop is None:
+        return []
+
+    if isinstance(req.stop, str):
+        stop_sequences = [req.stop]
+    else:
+        stop_sequences = list(req.stop)
+
+    for stop_sequence in stop_sequences:
+        if not isinstance(stop_sequence, str) or stop_sequence == "":
+            raise HTTPException(
+                status_code=400,
+                detail=_error_detail(
+                    code="invalid_stop",
+                    message="stop must be a non-empty string or a list of non-empty strings",
+                    model_id=req.model,
+                    retryable=False,
+                ),
+            )
+
+    return stop_sequences
+
+
+def _apply_stop_sequences(text: str, stop_sequences: List[str]) -> tuple[str, Optional[str]]:
+    if not stop_sequences:
+        return text, None
+
+    earliest_index: Optional[int] = None
+    matched_stop: Optional[str] = None
+
+    for stop_sequence in stop_sequences:
+        index = text.find(stop_sequence)
+        if index >= 0 and (earliest_index is None or index < earliest_index):
+            earliest_index = index
+            matched_stop = stop_sequence
+
+    if earliest_index is None:
+        return text, None
+
+    return text[:earliest_index], matched_stop
+
+
 @router.post("/chat/completions")
 async def chat_completions(req: ChatCompletionRequest):
     if req.stream:
@@ -123,6 +167,7 @@ async def chat_completions(req: ChatCompletionRequest):
         )
 
     effective_max_new_tokens = _effective_max_new_tokens(req)
+    stop_sequences = _normalize_stop_sequences(req)
 
     registry = ModelRegistry()
 
@@ -197,6 +242,7 @@ async def chat_completions(req: ChatCompletionRequest):
             ),
         )
 
+    response_text, matched_stop = _apply_stop_sequences(result["text"], stop_sequences)
     created = int(time.time())
 
     return {
@@ -209,7 +255,7 @@ async def chat_completions(req: ChatCompletionRequest):
                 "index": 0,
                 "message": {
                     "role": "assistant",
-                    "content": result["text"],
+                    "content": response_text,
                 },
                 "finish_reason": "stop",
             }
@@ -227,5 +273,9 @@ async def chat_completions(req: ChatCompletionRequest):
             "rknpu_driver": model.get("rknpu_driver"),
             "requirement": model.get("requirement"),
             "llm": llm_queue.snapshot(),
+            "stop": {
+                "requested": stop_sequences,
+                "matched": matched_stop,
+            },
         },
     }

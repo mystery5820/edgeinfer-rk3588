@@ -7,6 +7,7 @@ MODEL_ID="${EDGEINFER_MODEL_ID:-qwen3-4b-rkllm-all-npu}"
 RUN_CHAT="${EDGEINFER_SMOKE_CHAT:-1}"
 RUN_BUSY="${EDGEINFER_SMOKE_BUSY:-1}"
 RUN_MAX_TOKENS_COMPAT="${EDGEINFER_SMOKE_MAX_TOKENS_COMPAT:-1}"
+RUN_STOP_COMPAT="${EDGEINFER_SMOKE_STOP_COMPAT:-1}"
 EXPECT_BACKEND="${EDGEINFER_EXPECT_BACKEND:-}"
 EXPECT_BACKEND_MODE="${EDGEINFER_EXPECT_BACKEND_MODE:-}"
 
@@ -19,6 +20,7 @@ echo "MODEL_ID=${MODEL_ID}"
 echo "RUN_CHAT=${RUN_CHAT}"
 echo "RUN_BUSY=${RUN_BUSY}"
 echo "RUN_MAX_TOKENS_COMPAT=${RUN_MAX_TOKENS_COMPAT}"
+echo "RUN_STOP_COMPAT=${RUN_STOP_COMPAT}"
 echo "EXPECT_BACKEND=${EXPECT_BACKEND:-<not checked>}"
 echo "EXPECT_BACKEND_MODE=${EXPECT_BACKEND_MODE:-<auto>}"
 echo
@@ -293,6 +295,46 @@ JSON
     echo "max_tokens conflict check OK"
   else
     echo "=== 4b. max_tokens compatibility skipped ==="
+  fi
+
+  if [ "${RUN_STOP_COMPAT}" = "1" ]; then
+    echo "=== 4c. stop sequences compatibility ==="
+
+    STOP_REQ="${TMP_DIR}/stop_req.json"
+    cat > "${STOP_REQ}" <<JSON
+{
+  "model": "${MODEL_ID}",
+  "messages": [
+    {"role": "system", "content": "你是 EdgeInfer-RK3588 端侧推理助手。"},
+    {"role": "user", "content": "请用一句话介绍 RK3588。"}
+  ],
+  "max_tokens": 48,
+  "stop": ["RK3588", "瑞芯微"]
+}
+JSON
+
+    curl_json POST "${BOARD_URL}/v1/chat/completions" "${STOP_REQ}"
+    assert_backend "${TMP_DIR}/response.json" "${EXPECT_BACKEND}" "stop sequences compatibility"
+
+    python3 -c '
+import json
+import sys
+from pathlib import Path
+
+data = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+content = data.get("choices", [{}])[0].get("message", {}).get("content", "")
+stop_sequences = ["RK3588", "瑞芯微"]
+matched = [seq for seq in stop_sequences if seq in content]
+if matched:
+    print(
+        f"ERROR: stop sequences still present in response content: {matched!r}",
+        file=sys.stderr,
+    )
+    sys.exit(1)
+print(f"stop sequence check OK: content_length={len(content)}")
+' "${TMP_DIR}/response.json"
+  else
+    echo "=== 4c. stop sequences compatibility skipped ==="
   fi
 else
   echo "=== 4. single chat completion skipped ==="
