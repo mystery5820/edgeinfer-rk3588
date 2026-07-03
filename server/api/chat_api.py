@@ -30,6 +30,7 @@ class ChatCompletionRequest(BaseModel):
     model: Optional[str] = Field(default="qwen3-4b-rkllm-all-npu")
     messages: List[ChatMessage]
     max_new_tokens: int = Field(default=128, ge=1, le=256)
+    max_tokens: Optional[int] = Field(default=None, ge=1, le=256)
     temperature: float = Field(default=0.7, ge=0.0, le=2.0)
     stream: bool = False
 
@@ -58,6 +59,13 @@ def _configured_rkllm_backend_name() -> str:
     return "rkllm-runner"
 
 
+def _request_field_was_set(req: BaseModel, field_name: str) -> bool:
+    fields_set = getattr(req, "model_fields_set", None)
+    if fields_set is None:
+        fields_set = getattr(req, "__fields_set__", set())
+    return field_name in fields_set
+
+
 def _error_detail(
     *,
     code: str,
@@ -80,6 +88,27 @@ def _error_detail(
     }
 
 
+def _effective_max_new_tokens(req: ChatCompletionRequest) -> int:
+    max_tokens_was_set = _request_field_was_set(req, "max_tokens") and req.max_tokens is not None
+    max_new_tokens_was_set = _request_field_was_set(req, "max_new_tokens")
+
+    if max_tokens_was_set and max_new_tokens_was_set and req.max_tokens != req.max_new_tokens:
+        raise HTTPException(
+            status_code=400,
+            detail=_error_detail(
+                code="token_limit_conflict",
+                message="max_tokens and max_new_tokens cannot both be set to different values",
+                model_id=req.model,
+                retryable=False,
+            ),
+        )
+
+    if max_tokens_was_set:
+        return int(req.max_tokens)
+
+    return int(req.max_new_tokens)
+
+
 @router.post("/chat/completions")
 async def chat_completions(req: ChatCompletionRequest):
     if req.stream:
@@ -92,6 +121,8 @@ async def chat_completions(req: ChatCompletionRequest):
                 retryable=False,
             ),
         )
+
+    effective_max_new_tokens = _effective_max_new_tokens(req)
 
     registry = ModelRegistry()
 
@@ -129,7 +160,7 @@ async def chat_completions(req: ChatCompletionRequest):
             lambda: backend.generate(
                 prompt=prompt,
                 model=model,
-                max_new_tokens=req.max_new_tokens,
+                max_new_tokens=effective_max_new_tokens,
                 timeout_seconds=LLM_TIMEOUT_SECONDS,
             ),
             timeout_seconds=LLM_TIMEOUT_SECONDS + 10,

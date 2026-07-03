@@ -6,6 +6,7 @@ MODEL_ID="${EDGEINFER_MODEL_ID:-qwen3-4b-rkllm-all-npu}"
 
 RUN_CHAT="${EDGEINFER_SMOKE_CHAT:-1}"
 RUN_BUSY="${EDGEINFER_SMOKE_BUSY:-1}"
+RUN_MAX_TOKENS_COMPAT="${EDGEINFER_SMOKE_MAX_TOKENS_COMPAT:-1}"
 EXPECT_BACKEND="${EDGEINFER_EXPECT_BACKEND:-}"
 EXPECT_BACKEND_MODE="${EDGEINFER_EXPECT_BACKEND_MODE:-}"
 
@@ -17,6 +18,7 @@ echo "BOARD_URL=${BOARD_URL}"
 echo "MODEL_ID=${MODEL_ID}"
 echo "RUN_CHAT=${RUN_CHAT}"
 echo "RUN_BUSY=${RUN_BUSY}"
+echo "RUN_MAX_TOKENS_COMPAT=${RUN_MAX_TOKENS_COMPAT}"
 echo "EXPECT_BACKEND=${EXPECT_BACKEND:-<not checked>}"
 echo "EXPECT_BACKEND_MODE=${EXPECT_BACKEND_MODE:-<auto>}"
 echo
@@ -233,6 +235,65 @@ JSON
 
   curl_json POST "${BOARD_URL}/v1/chat/completions" "${CHAT_REQ}"
   assert_backend "${TMP_DIR}/response.json" "${EXPECT_BACKEND}" "single chat"
+
+  if [ "${RUN_MAX_TOKENS_COMPAT}" = "1" ]; then
+    echo "=== 4b. max_tokens compatibility ==="
+
+    MAX_TOKENS_REQ="${TMP_DIR}/max_tokens_req.json"
+    MAX_TOKENS_CONFLICT_REQ="${TMP_DIR}/max_tokens_conflict_req.json"
+    MAX_TOKENS_CONFLICT_OUT="${TMP_DIR}/max_tokens_conflict_out.json"
+    MAX_TOKENS_CONFLICT_CODE="${TMP_DIR}/max_tokens_conflict_code.txt"
+
+    cat > "${MAX_TOKENS_REQ}" <<JSON
+{
+  "model": "${MODEL_ID}",
+  "messages": [
+    {"role": "system", "content": "你是 EdgeInfer-RK3588 端侧推理助手。"},
+    {"role": "user", "content": "请用一句话介绍 RK3588。"}
+  ],
+  "max_tokens": 32
+}
+JSON
+
+    curl_json POST "${BOARD_URL}/v1/chat/completions" "${MAX_TOKENS_REQ}"
+    assert_backend "${TMP_DIR}/response.json" "${EXPECT_BACKEND}" "max_tokens compatibility"
+
+    cat > "${MAX_TOKENS_CONFLICT_REQ}" <<JSON
+{
+  "model": "${MODEL_ID}",
+  "messages": [
+    {"role": "user", "content": "请用一句话介绍 RK3588。"}
+  ],
+  "max_new_tokens": 16,
+  "max_tokens": 17
+}
+JSON
+
+    echo "--- max_tokens conflict request ---"
+    curl -sS -o "${MAX_TOKENS_CONFLICT_OUT}" -w "%{http_code}" \
+      -X POST "${BOARD_URL}/v1/chat/completions" \
+      -H "Content-Type: application/json" \
+      -d @"${MAX_TOKENS_CONFLICT_REQ}" > "${MAX_TOKENS_CONFLICT_CODE}"
+
+    MAX_TOKENS_CONFLICT_CODE_VALUE="$(cat "${MAX_TOKENS_CONFLICT_CODE}")"
+    echo "conflict HTTP ${MAX_TOKENS_CONFLICT_CODE_VALUE}"
+    python3 -m json.tool "${MAX_TOKENS_CONFLICT_OUT}" || cat "${MAX_TOKENS_CONFLICT_OUT}"
+    echo
+
+    if [ "${MAX_TOKENS_CONFLICT_CODE_VALUE}" != "400" ]; then
+      echo "ERROR: expected max_tokens conflict to return HTTP 400, got ${MAX_TOKENS_CONFLICT_CODE_VALUE}" >&2
+      exit 1
+    fi
+
+    if ! grep -q "token_limit_conflict" "${MAX_TOKENS_CONFLICT_OUT}"; then
+      echo "ERROR: max_tokens conflict response does not contain token_limit_conflict" >&2
+      exit 1
+    fi
+
+    echo "max_tokens conflict check OK"
+  else
+    echo "=== 4b. max_tokens compatibility skipped ==="
+  fi
 else
   echo "=== 4. single chat completion skipped ==="
 fi
