@@ -612,23 +612,9 @@ EDGEINFER_SMOKE_STOP_COMPAT=0 ./scripts/host/smoke_test_serving.sh
 
 ---
 
-## 11. 后续建议
+## 11. 主机侧 OpenAI-like Python 客户端测试
 
-下一步可继续增强：
+除 `smoke_test_serving.sh` 外，项目还提供主机侧 Python 客户端测试脚本：
 
-```text
-1. 增加 OpenAI SDK 风格 Python client smoke test
-2. 增加 response_format 参数校验
-3. 增加 response_format 参数校验
-4. 增加 usage token 统计
-5. 增加 stream=true SSE 流式输出
-6. 增加更细的 finish_reason，例如 length
-```
-
-其中最推荐优先做：
-
-```text
-增加 scripts/host/test_openai_chat_client.py
-```
-
-用于从主机侧模拟 OpenAI SDK 风格调用，验证外部应用接入体验。
+```bash
+./scripts/host/test_openai_chat_client.py
