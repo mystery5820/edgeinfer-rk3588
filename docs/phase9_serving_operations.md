@@ -81,6 +81,12 @@ GET  /v1/metrics
 POST /v1/chat/completions
 ```
 
+`/v1/chat/completions` 的 OpenAI-like 兼容范围、请求字段、错误码和 curl 示例见：
+
+```text
+docs/phase9_openai_compat.md
+```
+
 ### 2.1 Health
 
 ```bash

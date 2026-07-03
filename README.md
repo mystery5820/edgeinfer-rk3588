@@ -56,3 +56,9 @@ Phase 9 Serving Framework 已提供 host 侧部署与验收脚本：
 docs/phase9_serving_operations.md
 ```
 
+OpenAI-like Chat API 兼容说明见：
+
+```text
+docs/phase9_openai_compat.md
+```
+

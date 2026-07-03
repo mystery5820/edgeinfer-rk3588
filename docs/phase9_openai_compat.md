@@ -1,0 +1,608 @@
+# Phase 9 OpenAI-like Chat API 兼容说明
+
+本文档记录 EdgeInfer-RK3588 Phase 9 Serving Framework 当前 `/v1/chat/completions` 接口对 OpenAI Chat Completions 风格 API 的兼容范围、请求字段、响应字段、错误响应和当前限制。
+
+当前目标不是完整复刻 OpenAI API，而是在 RK3588 板端 RKLLM 后端能力范围内，提供一个足够接近 OpenAI Chat Completions 的最小可用接口，便于后续接入 Web UI、脚本客户端和 OpenAI SDK 风格调用。
+
+---
+
+## 1. 接口概览
+
+当前 Chat API：
+
+```text
+POST /v1/chat/completions
+```
+
+默认地址：
+
+```text
+http://192.168.43.7:8000/v1/chat/completions
+```
+
+当前推荐模型：
+
+```text
+qwen3-4b-rkllm-all-npu
+```
+
+该接口当前由 FastAPI 实现，后端实际调用 RKLLM runner 或 RKLLM persistent worker。两种后端模式下，HTTP API 的请求字段和响应格式保持一致。
+
+---
+
+## 2. 最小请求示例
+
+### 2.1 OpenAI 风格 max_tokens
+
+```bash
+curl -sS http://192.168.43.7:8000/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "qwen3-4b-rkllm-all-npu",
+    "messages": [
+      {"role": "system", "content": "你是 EdgeInfer-RK3588 端侧推理助手。"},
+      {"role": "user", "content": "请用一句话介绍 RK3588。"}
+    ],
+    "max_tokens": 64
+  }' | python3 -m json.tool
+```
+
+### 2.2 项目内部原始 max_new_tokens
+
+```bash
+curl -sS http://192.168.43.7:8000/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "qwen3-4b-rkllm-all-npu",
+    "messages": [
+      {"role": "user", "content": "请用一句话介绍 RK3588。"}
+    ],
+    "max_new_tokens": 64
+  }' | python3 -m json.tool
+```
+
+---
+
+## 3. 支持的请求字段
+
+### 3.1 model
+
+类型：
+
+```text
+string，可选
+```
+
+默认值：
+
+```text
+qwen3-4b-rkllm-all-npu
+```
+
+当前推荐使用：
+
+```text
+qwen3-4b-rkllm-all-npu
+```
+
+如果模型不存在，接口返回 HTTP 404，错误码为：
+
+```text
+model_not_found
+```
+
+如果模型存在但不是 LLM 任务，接口返回 HTTP 400，错误码为：
+
+```text
+model_not_llm
+```
+
+---
+
+### 3.2 messages
+
+类型：
+
+```text
+array，必填
+```
+
+当前支持的 role：
+
+```text
+system
+user
+assistant
+```
+
+示例：
+
+```json
+[
+  {"role": "system", "content": "你是 EdgeInfer-RK3588 端侧推理助手。"},
+  {"role": "user", "content": "请用一句话介绍 RK3588。"}
+]
+```
+
+当前 Phase 9 的 prompt 渲染逻辑会把 messages 转换为简单文本格式：
+
+```text
+System: ...
+User: ...
+Assistant: ...
+Assistant:
+```
+
+注意：当前还不是完整的模型官方 chat template 实现，而是 Phase 9 Serving MVP 的统一 prompt 渲染策略。
+
+---
+
+### 3.3 max_tokens
+
+类型：
+
+```text
+integer，可选，范围 1-256
+```
+
+这是 OpenAI 风格的输出 token 限制字段。Phase 9 已支持该字段，并会映射为后端实际使用的 `max_new_tokens`。
+
+示例：
+
+```json
+{
+  "max_tokens": 64
+}
+```
+
+---
+
+### 3.4 max_new_tokens
+
+类型：
+
+```text
+integer，可选，范围 1-256
+```
+
+这是本项目早期使用的内部字段，仍然保持兼容。
+
+示例：
+
+```json
+{
+  "max_new_tokens": 64
+}
+```
+
+---
+
+### 3.5 max_tokens 与 max_new_tokens 的兼容规则
+
+允许只传 `max_tokens`：
+
+```json
+{
+  "max_tokens": 64
+}
+```
+
+允许只传 `max_new_tokens`：
+
+```json
+{
+  "max_new_tokens": 64
+}
+```
+
+允许两者同时传入且值相同：
+
+```json
+{
+  "max_tokens": 64,
+  "max_new_tokens": 64
+}
+```
+
+不允许两者同时传入且值不同：
+
+```json
+{
+  "max_tokens": 64,
+  "max_new_tokens": 32
+}
+```
+
+这种情况下返回 HTTP 400：
+
+```json
+{
+  "detail": {
+    "error": {
+      "code": "token_limit_conflict",
+      "message": "max_tokens and max_new_tokens cannot both be set to different values",
+      "type": "edgeinfer_error",
+      "retryable": false
+    }
+  }
+}
+```
+
+---
+
+### 3.6 stop
+
+类型：
+
+```text
+string 或 string array，可选
+```
+
+支持单个 stop sequence：
+
+```json
+{
+  "stop": "
+User:"
+}
+```
+
+支持多个 stop sequence：
+
+```json
+{
+  "stop": ["
+User:", "</s>"]
+}
+```
+
+当前实现方式：
+
+```text
+RKLLM 后端完成生成后，由 Python API 层对生成文本进行后处理截断。
+如果多个 stop sequence 都出现，使用最早出现的位置截断。
+截断后的响应 content 不包含 stop sequence 本身。
+```
+
+如果 stop 为空字符串，或者数组里包含非字符串 / 空字符串，返回 HTTP 400：
+
+```text
+invalid_stop
+```
+
+---
+
+### 3.7 temperature
+
+类型：
+
+```text
+float，可选，范围 0.0-2.0
+```
+
+当前请求模型中保留该字段，便于未来兼容 OpenAI 风格参数。
+
+当前 Phase 9 MVP 中，`temperature` 尚未真正下传到 RKLLM runtime 参数，不应依赖它改变输出随机性。
+
+---
+
+### 3.8 stream
+
+类型：
+
+```text
+boolean，可选
+```
+
+当前只支持：
+
+```json
+{
+  "stream": false
+}
+```
+
+如果传入：
+
+```json
+{
+  "stream": true
+}
+```
+
+接口返回 HTTP 400：
+
+```text
+stream_not_supported
+```
+
+原因：Phase 9 MVP 当前只实现非流式响应，暂未实现 Server-Sent Events 流式输出。
+
+---
+
+## 4. 响应格式
+
+成功响应示例：
+
+```json
+{
+  "id": "chatcmpl-xxxxxxxxxxxx",
+  "object": "chat.completion",
+  "created": 1783050000,
+  "model": "qwen3-4b-rkllm-all-npu",
+  "choices": [
+    {
+      "index": 0,
+      "message": {
+        "role": "assistant",
+        "content": "RK3588 是瑞芯微推出的高性能 AIoT SoC。"
+      },
+      "finish_reason": "stop"
+    }
+  ],
+  "usage": {
+    "prompt_tokens": null,
+    "completion_tokens": null,
+    "total_tokens": null
+  },
+  "edgeinfer": {
+    "backend": "rkllm-runner",
+    "latency_ms": 21055.646,
+    "recommended_model": true,
+    "runtime": "rkllm-runtime-v1.3.0",
+    "rknpu_driver": "v0.9.8",
+    "requirement": "clean RKNPU environment, no old qwen-web-chat or yolov5-web demo services",
+    "llm": {
+      "max_concurrent": 1,
+      "queue_policy": "reject_when_busy"
+    },
+    "stop": {
+      "requested": [],
+      "matched": null
+    }
+  }
+}
+```
+
+---
+
+## 5. 与 OpenAI Chat Completions 的兼容字段
+
+当前已经支持或部分支持：
+
+```text
+model
+messages
+max_tokens
+stop
+temperature
+stream=false
+object
+created
+choices
+choices[].index
+choices[].message.role
+choices[].message.content
+choices[].finish_reason
+usage
+```
+
+其中需要注意：
+
+```text
+usage 当前字段存在，但 token 计数暂为 null。
+temperature 当前字段存在并校验范围，但尚未下传控制 RKLLM 采样。
+finish_reason 当前统一为 stop，尚未区分 length / content_filter / tool_calls 等情况。
+```
+
+---
+
+## 6. EdgeInfer 扩展字段
+
+为了便于端侧工程调试，响应中额外包含：
+
+```text
+edgeinfer
+```
+
+当前常见字段：
+
+```text
+backend              实际使用的后端，例如 rkllm-runner 或 rkllm-persistent-worker
+latency_ms           后端生成耗时
+recommended_model    是否是当前推荐模型
+runtime              RKLLM runtime 信息
+rknpu_driver          RKNPU driver 信息
+requirement          模型运行要求
+llm                  当前 LLM 队列和 busy 状态快照
+stop                 stop sequence 处理情况
+```
+
+`edgeinfer.stop` 示例：
+
+```json
+{
+  "requested": ["RK3588", "瑞芯微"],
+  "matched": "RK3588"
+}
+```
+
+含义：
+
+```text
+requested  用户请求的 stop sequences
+matched    本次实际命中的 stop sequence；如果没有命中则为 null
+```
+
+---
+
+## 7. 当前错误响应格式
+
+错误响应统一放在 FastAPI 的 `detail` 字段下：
+
+```json
+{
+  "detail": {
+    "error": {
+      "code": "llm_backend_busy",
+      "message": "LLM backend is busy; please retry later",
+      "type": "edgeinfer_error",
+      "retryable": true
+    },
+    "edgeinfer": {
+      "model": "qwen3-4b-rkllm-all-npu",
+      "backend": "rkllm-runner",
+      "llm": {
+        "max_concurrent": 1,
+        "busy": true,
+        "queue_policy": "reject_when_busy"
+      }
+    }
+  }
+}
+```
+
+常见错误码：
+
+| HTTP | code | 说明 |
+|---:|---|---|
+| 400 | stream_not_supported | 当前不支持 `stream=true` |
+| 400 | token_limit_conflict | `max_tokens` 和 `max_new_tokens` 同时传入且值不同 |
+| 400 | invalid_stop | `stop` 不是非空字符串或非空字符串数组 |
+| 400 | model_not_llm | 选择的模型不是 LLM 任务 |
+| 404 | model_not_found | 模型不存在 |
+| 429 | llm_backend_busy | LLM 后端正在处理请求，当前策略为 busy 直接拒绝 |
+| 504 | llm_timeout | LLM 请求超时 |
+| 502 | rkllm_runtime_error | RKLLM runtime 或 runner 执行失败 |
+
+---
+
+## 8. 当前暂不支持或未完整实现的字段
+
+当前暂不支持或未纳入稳定兼容承诺：
+
+```text
+stream=true
+n
+top_p
+presence_penalty
+frequency_penalty
+logit_bias
+logprobs
+top_logprobs
+seed
+user
+tools
+tool_choice
+function_call
+response_format
+parallel_tool_calls
+```
+
+说明：
+
+```text
+这些字段后续可以逐步加入请求模型、参数校验和测试用例。
+其中 stream=true 需要实现 SSE 流式输出；
+tools / tool_choice 需要额外设计工具调用协议；
+usage token 统计需要 tokenizer 或 RKLLM runtime 侧统计能力支持。
+```
+
+---
+
+## 9. one-shot 与 worker 后端行为
+
+当前两种 RKLLM 后端：
+
+```text
+rkllm-runner
+rkllm-persistent-worker
+```
+
+API 兼容行为保持一致：
+
+```text
+max_tokens 兼容规则一致
+stop 截断规则一致
+错误响应格式一致
+busy 策略一致
+```
+
+区别主要体现在运行机制和性能：
+
+```text
+one-shot：每次请求启动 runner 子进程，生命周期简单，但延迟较高。
+worker：复用 persistent no-history worker，后续请求延迟更低，但需要额外关注 worker 生命周期。
+```
+
+当前仍保持：
+
+```text
+max_concurrent=1
+queue_policy=reject_when_busy
+```
+
+---
+
+## 10. 验证方式
+
+完整双模式验证：
+
+```bash
+cd ~/edgeinfer-rk3588
+
+EDGEINFER_VALIDATE_DEPLOY=1 \
+./scripts/host/validate_serving_modes.sh
+```
+
+该命令会验证：
+
+```text
+health
+models
+metrics
+single chat
+max_tokens compatibility
+max_tokens conflict HTTP 400
+stop sequences compatibility
+busy rejection HTTP 429
+one-shot mode
+worker mode
+cleanup restore one-shot
+```
+
+单独运行 smoke test：
+
+```bash
+./scripts/host/smoke_test_serving.sh
+```
+
+可以通过环境变量关闭部分兼容测试：
+
+```bash
+EDGEINFER_SMOKE_MAX_TOKENS_COMPAT=0 ./scripts/host/smoke_test_serving.sh
+EDGEINFER_SMOKE_STOP_COMPAT=0 ./scripts/host/smoke_test_serving.sh
+```
+
+---
+
+## 11. 后续建议
+
+下一步可继续增强：
+
+```text
+1. 增加 OpenAI SDK 风格 Python client smoke test
+2. 增加 n 参数校验，明确只支持 n=1
+3. 增加 response_format 参数校验
+4. 增加 usage token 统计
+5. 增加 stream=true SSE 流式输出
+6. 增加更细的 finish_reason，例如 length
+```
+
+其中最推荐优先做：
+
+```text
+增加 scripts/host/test_openai_chat_client.py
+```
+
+用于从主机侧模拟 OpenAI SDK 风格调用，验证外部应用接入体验。
