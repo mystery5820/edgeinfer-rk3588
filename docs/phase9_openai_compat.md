@@ -272,7 +272,33 @@ invalid_stop
 
 ---
 
-### 3.7 temperature
+### 3.7 n
+
+类型：
+
+```text
+integer，可选，当前只支持 1
+```
+
+OpenAI Chat Completions 中，`n` 表示为每个输入生成多少个候选回答。当前 Phase 9 MVP 只支持单路 RKLLM 生成，因此只接受：
+
+```json
+{
+  "n": 1
+}
+```
+
+如果传入 `n > 1`，接口返回 HTTP 400：
+
+```text
+n_not_supported
+```
+
+这样可以避免外部客户端误以为服务会返回多个 choices。
+
+---
+
+### 3.8 temperature
 
 类型：
 
@@ -286,7 +312,7 @@ float，可选，范围 0.0-2.0
 
 ---
 
-### 3.8 stream
+### 3.9 stream
 
 类型：
 
@@ -483,7 +509,6 @@ matched    本次实际命中的 stop sequence；如果没有命中则为 null
 
 ```text
 stream=true
-n
 top_p
 presence_penalty
 frequency_penalty
@@ -565,6 +590,7 @@ single chat
 max_tokens compatibility
 max_tokens conflict HTTP 400
 stop sequences compatibility
+n parameter compatibility
 busy rejection HTTP 429
 one-shot mode
 worker mode
@@ -592,7 +618,7 @@ EDGEINFER_SMOKE_STOP_COMPAT=0 ./scripts/host/smoke_test_serving.sh
 
 ```text
 1. 增加 OpenAI SDK 风格 Python client smoke test
-2. 增加 n 参数校验，明确只支持 n=1
+2. 增加 response_format 参数校验
 3. 增加 response_format 参数校验
 4. 增加 usage token 统计
 5. 增加 stream=true SSE 流式输出

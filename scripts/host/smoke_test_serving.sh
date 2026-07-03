@@ -8,6 +8,7 @@ RUN_CHAT="${EDGEINFER_SMOKE_CHAT:-1}"
 RUN_BUSY="${EDGEINFER_SMOKE_BUSY:-1}"
 RUN_MAX_TOKENS_COMPAT="${EDGEINFER_SMOKE_MAX_TOKENS_COMPAT:-1}"
 RUN_STOP_COMPAT="${EDGEINFER_SMOKE_STOP_COMPAT:-1}"
+RUN_N_COMPAT="${EDGEINFER_SMOKE_N_COMPAT:-1}"
 EXPECT_BACKEND="${EDGEINFER_EXPECT_BACKEND:-}"
 EXPECT_BACKEND_MODE="${EDGEINFER_EXPECT_BACKEND_MODE:-}"
 
@@ -21,6 +22,7 @@ echo "RUN_CHAT=${RUN_CHAT}"
 echo "RUN_BUSY=${RUN_BUSY}"
 echo "RUN_MAX_TOKENS_COMPAT=${RUN_MAX_TOKENS_COMPAT}"
 echo "RUN_STOP_COMPAT=${RUN_STOP_COMPAT}"
+echo "RUN_N_COMPAT=${RUN_N_COMPAT}"
 echo "EXPECT_BACKEND=${EXPECT_BACKEND:-<not checked>}"
 echo "EXPECT_BACKEND_MODE=${EXPECT_BACKEND_MODE:-<auto>}"
 echo
@@ -253,7 +255,8 @@ JSON
     {"role": "system", "content": "你是 EdgeInfer-RK3588 端侧推理助手。"},
     {"role": "user", "content": "请用一句话介绍 RK3588。"}
   ],
-  "max_tokens": 32
+  "max_tokens": 32,
+  "n": 1
 }
 JSON
 
@@ -335,6 +338,50 @@ print(f"stop sequence check OK: content_length={len(content)}")
 ' "${TMP_DIR}/response.json"
   else
     echo "=== 4c. stop sequences compatibility skipped ==="
+  fi
+
+  if [ "${RUN_N_COMPAT}" = "1" ]; then
+    echo "=== 4d. n parameter compatibility ==="
+
+    N_UNSUPPORTED_REQ="${TMP_DIR}/n_unsupported_req.json"
+    N_UNSUPPORTED_OUT="${TMP_DIR}/n_unsupported_out.json"
+    N_UNSUPPORTED_CODE="${TMP_DIR}/n_unsupported_code.txt"
+
+    cat > "${N_UNSUPPORTED_REQ}" <<JSON
+{
+  "model": "${MODEL_ID}",
+  "messages": [
+    {"role": "user", "content": "请用一句话介绍 RK3588。"}
+  ],
+  "max_tokens": 16,
+  "n": 2
+}
+JSON
+
+    echo "--- n unsupported request ---"
+    curl -sS -o "${N_UNSUPPORTED_OUT}" -w "%{http_code}" \
+      -X POST "${BOARD_URL}/v1/chat/completions" \
+      -H "Content-Type: application/json" \
+      -d @"${N_UNSUPPORTED_REQ}" > "${N_UNSUPPORTED_CODE}"
+
+    N_UNSUPPORTED_CODE_VALUE="$(cat "${N_UNSUPPORTED_CODE}")"
+    echo "n unsupported HTTP ${N_UNSUPPORTED_CODE_VALUE}"
+    python3 -m json.tool "${N_UNSUPPORTED_OUT}" || cat "${N_UNSUPPORTED_OUT}"
+    echo
+
+    if [ "${N_UNSUPPORTED_CODE_VALUE}" != "400" ]; then
+      echo "ERROR: expected n=2 to return HTTP 400, got ${N_UNSUPPORTED_CODE_VALUE}" >&2
+      exit 1
+    fi
+
+    if ! grep -q "n_not_supported" "${N_UNSUPPORTED_OUT}"; then
+      echo "ERROR: n=2 response does not contain n_not_supported" >&2
+      exit 1
+    fi
+
+    echo "n parameter check OK"
+  else
+    echo "=== 4d. n parameter compatibility skipped ==="
   fi
 else
   echo "=== 4. single chat completion skipped ==="

@@ -32,6 +32,7 @@ class ChatCompletionRequest(BaseModel):
     max_new_tokens: int = Field(default=128, ge=1, le=256)
     max_tokens: Optional[int] = Field(default=None, ge=1, le=256)
     temperature: float = Field(default=0.7, ge=0.0, le=2.0)
+    n: int = Field(default=1, ge=1)
     stream: bool = False
     stop: Optional[Union[str, List[str]]] = None
 
@@ -153,6 +154,21 @@ def _apply_stop_sequences(text: str, stop_sequences: List[str]) -> tuple[str, Op
     return text[:earliest_index], matched_stop
 
 
+def _validate_n(req: ChatCompletionRequest) -> None:
+    if req.n == 1:
+        return
+
+    raise HTTPException(
+        status_code=400,
+        detail=_error_detail(
+            code="n_not_supported",
+            message="n values other than 1 are not supported in Phase 9 MVP",
+            model_id=req.model,
+            retryable=False,
+        ),
+    )
+
+
 @router.post("/chat/completions")
 async def chat_completions(req: ChatCompletionRequest):
     if req.stream:
@@ -165,6 +181,8 @@ async def chat_completions(req: ChatCompletionRequest):
                 retryable=False,
             ),
         )
+
+    _validate_n(req)
 
     effective_max_new_tokens = _effective_max_new_tokens(req)
     stop_sequences = _normalize_stop_sequences(req)

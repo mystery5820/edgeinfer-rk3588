@@ -125,6 +125,7 @@ def test_max_tokens_chat() -> None:
             },
         ],
         "max_tokens": 48,
+        "n": 1,
     }
 
     _, body = request_json("POST", "/v1/chat/completions", payload, expected_status=200)
@@ -197,6 +198,31 @@ def test_stream_rejected() -> None:
     print()
 
 
+def test_n_rejected() -> None:
+    print("=== 5. n>1 rejection ===")
+    payload = {
+        "model": MODEL_ID,
+        "messages": [
+            {
+                "role": "user",
+                "content": "请用一句话介绍 RK3588。",
+            }
+        ],
+        "max_tokens": 16,
+        "n": 2,
+    }
+
+    status, body = request_json("POST", "/v1/chat/completions", payload, expected_status=400)
+    code = get_error_code(body)
+    if code != "n_not_supported":
+        raise AssertionError(f"expected n_not_supported, got {code!r}: {body!r}")
+
+    print(f"HTTP {status}")
+    print(json.dumps(body, ensure_ascii=False, indent=2))
+    print("n rejection check OK")
+    print()
+
+
 def main() -> int:
     started = time.time()
 
@@ -211,6 +237,7 @@ def main() -> int:
         test_max_tokens_chat()
         test_stop_sequences()
         test_stream_rejected()
+        test_n_rejected()
     except Exception as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 1
