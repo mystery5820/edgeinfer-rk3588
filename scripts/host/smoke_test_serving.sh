@@ -7,6 +7,7 @@ MODEL_ID="${EDGEINFER_MODEL_ID:-qwen3-4b-rkllm-all-npu}"
 RUN_CHAT="${EDGEINFER_SMOKE_CHAT:-1}"
 RUN_BUSY="${EDGEINFER_SMOKE_BUSY:-1}"
 EXPECT_BACKEND="${EDGEINFER_EXPECT_BACKEND:-}"
+EXPECT_BACKEND_MODE="${EDGEINFER_EXPECT_BACKEND_MODE:-}"
 
 TMP_DIR="$(mktemp -d /tmp/edgeinfer_smoke_XXXXXX)"
 trap 'rm -rf "${TMP_DIR}"' EXIT
@@ -17,6 +18,7 @@ echo "MODEL_ID=${MODEL_ID}"
 echo "RUN_CHAT=${RUN_CHAT}"
 echo "RUN_BUSY=${RUN_BUSY}"
 echo "EXPECT_BACKEND=${EXPECT_BACKEND:-<not checked>}"
+echo "EXPECT_BACKEND_MODE=${EXPECT_BACKEND_MODE:-<auto>}"
 echo
 
 curl_json() {
@@ -79,6 +81,131 @@ print(data.get("edgeinfer", {}).get("backend", ""))
   echo "backend check OK: ${label}: ${actual_backend}"
 }
 
+
+infer_expected_backend_mode() {
+  if [ -n "${EXPECT_BACKEND_MODE}" ]; then
+    echo "${EXPECT_BACKEND_MODE}"
+    return 0
+  fi
+
+  case "${EXPECT_BACKEND}" in
+    rkllm-runner)
+      echo "oneshot"
+      ;;
+    rkllm-persistent-worker)
+      echo "worker"
+      ;;
+    fake)
+      echo "fake"
+      ;;
+    *)
+      echo ""
+      ;;
+  esac
+}
+
+assert_metrics_backend() {
+  local json_file="$1"
+  local label="$2"
+  local require_worker_started="${3:-0}"
+
+  local expected_mode
+  expected_mode="$(infer_expected_backend_mode)"
+
+  if [ -z "${expected_mode}" ] || [ "${expected_mode}" = "fake" ]; then
+    return 0
+  fi
+
+  python3 -c '
+import json
+import sys
+from pathlib import Path
+
+json_file = Path(sys.argv[1])
+expected_mode = sys.argv[2]
+label = sys.argv[3]
+require_worker_started = sys.argv[4] == "1"
+
+data = json.loads(json_file.read_text(encoding="utf-8"))
+backend = data.get("rkllm_backend", {})
+actual_mode = backend.get("mode")
+worker_enabled = backend.get("worker_enabled")
+worker_runtime = backend.get("worker_runtime")
+
+if actual_mode != expected_mode:
+    print(
+        f"ERROR: {label} metrics backend mode mismatch: "
+        f"expected {expected_mode!r}, got {actual_mode!r}",
+        file=sys.stderr,
+    )
+    sys.exit(1)
+
+if expected_mode == "oneshot":
+    if worker_enabled is not False:
+        print(
+            f"ERROR: {label} expected worker_enabled=false in oneshot mode, "
+            f"got {worker_enabled!r}",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    if worker_runtime is not None:
+        print(
+            f"ERROR: {label} expected worker_runtime=null in oneshot mode, "
+            f"got {worker_runtime!r}",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+elif expected_mode == "worker":
+    if worker_enabled is not True:
+        print(
+            f"ERROR: {label} expected worker_enabled=true in worker mode, "
+            f"got {worker_enabled!r}",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    if not isinstance(worker_runtime, dict):
+        print(
+            f"ERROR: {label} expected worker_runtime object in worker mode, "
+            f"got {worker_runtime!r}",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    if require_worker_started:
+        if worker_runtime.get("started") is not True:
+            print(
+                f"ERROR: {label} expected worker_runtime.started=true after chat, "
+                f"got {worker_runtime.get('started')!r}",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        if int(worker_runtime.get("request_count") or 0) < 1:
+            print(
+                f"ERROR: {label} expected worker request_count >= 1 after chat, "
+                f"got {worker_runtime.get('request_count')!r}",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        if int(worker_runtime.get("failed_request_count") or 0) != 0:
+            print(
+                f"ERROR: {label} expected failed_request_count=0, "
+                f"got {worker_runtime.get('failed_request_count')!r}",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+else:
+    print(f"ERROR: unsupported expected backend mode: {expected_mode!r}", file=sys.stderr)
+    sys.exit(1)
+
+runtime_state = None
+if isinstance(worker_runtime, dict):
+    runtime_state = worker_runtime.get("started")
+print(
+    f"metrics backend check OK: {label}: "
+    f"mode={actual_mode}, worker_enabled={worker_enabled}, worker_started={runtime_state}"
+)
+' "${json_file}" "${expected_mode}" "${label}" "${require_worker_started}"
+}
+
 echo "=== 1. health ==="
 curl_json GET "${BOARD_URL}/v1/health"
 
@@ -87,6 +214,7 @@ curl_json GET "${BOARD_URL}/v1/models"
 
 echo "=== 3. metrics before chat ==="
 curl_json GET "${BOARD_URL}/v1/metrics"
+assert_metrics_backend "${TMP_DIR}/response.json" "metrics before chat" "0"
 
 if [ "${RUN_CHAT}" = "1" ]; then
   echo "=== 4. single chat completion ==="
@@ -111,6 +239,7 @@ fi
 
 echo "=== 5. metrics after single chat ==="
 curl_json GET "${BOARD_URL}/v1/metrics"
+assert_metrics_backend "${TMP_DIR}/response.json" "metrics after single chat" "${RUN_CHAT}"
 
 if [ "${RUN_BUSY}" = "1" ]; then
   echo "=== 6. busy rejection test ==="
@@ -199,5 +328,10 @@ fi
 
 echo "=== 7. metrics after busy test ==="
 curl_json GET "${BOARD_URL}/v1/metrics"
+FINAL_REQUIRE_WORKER_STARTED="0"
+if [ "${RUN_CHAT}" = "1" ] || [ "${RUN_BUSY}" = "1" ]; then
+  FINAL_REQUIRE_WORKER_STARTED="1"
+fi
+assert_metrics_backend "${TMP_DIR}/response.json" "metrics after busy test" "${FINAL_REQUIRE_WORKER_STARTED}"
 
 echo "=== Smoke test passed ==="
