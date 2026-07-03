@@ -140,6 +140,32 @@ class RKLLMBackend:
 
             return cls._worker.snapshot()
 
+    @classmethod
+    def stop_worker_runtime(cls) -> Dict[str, Any]:
+        with cls._worker_guard:
+            if cls._worker is None:
+                cls._worker_key = None
+                return {
+                    "stopped": False,
+                    "reason": "worker_not_started",
+                    "pid": None,
+                }
+
+            snapshot = cls._worker.snapshot()
+            pid = snapshot.get("pid")
+
+            try:
+                cls._worker.stop()
+                return {
+                    "stopped": True,
+                    "reason": "worker_stopped",
+                    "pid": pid,
+                }
+            finally:
+                cls._worker = None
+                cls._worker_key = None
+
+
     def _generate_with_worker(
         self,
         *,

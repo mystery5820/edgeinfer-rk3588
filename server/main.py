@@ -6,6 +6,7 @@ from server.api.health_api import router as health_router
 from server.api.model_api import router as model_router
 from server.api.metrics_api import router as metrics_router
 from server.api.chat_api import router as chat_router
+from server.runtime.rkllm_backend import RKLLMBackend
 
 app = FastAPI(
     title="EdgeInfer-RK3588 Serving Framework",
@@ -17,6 +18,12 @@ app.include_router(health_router)
 app.include_router(model_router)
 app.include_router(metrics_router)
 app.include_router(chat_router)
+
+
+
+@app.on_event("shutdown")
+def shutdown_runtime():
+    RKLLMBackend.stop_worker_runtime()
 
 
 @app.get("/")
