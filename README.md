@@ -31,3 +31,28 @@
 - third_party：RKNN / RKLLM 官方工具包
 - results：Benchmark 与日志结果
 - envs：Python 环境依赖记录
+
+## Phase 9 Serving 运维与验证
+
+Phase 9 Serving Framework 已提供 host 侧部署与验收脚本：
+
+```bash
+./scripts/host/deploy_serving_to_board.sh
+./scripts/host/smoke_test_serving.sh
+./scripts/host/validate_serving_modes.sh
+```
+
+推荐完整验收命令：
+
+```bash
+./scripts/host/validate_serving_modes.sh
+```
+
+该命令会自动验证默认 one-shot 模式与可选 RKLLM persistent worker 模式，并在结束后恢复默认 one-shot。
+
+详细说明见：
+
+```text
+docs/phase9_serving_operations.md
+```
+
