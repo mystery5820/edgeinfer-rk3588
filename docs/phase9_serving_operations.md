@@ -377,6 +377,7 @@ scripts/host
 scripts/host/deploy_serving_to_board.sh
 scripts/host/smoke_test_serving.sh
 scripts/host/validate_serving_modes.sh
+scripts/host/check_openai_sdk_examples.py
 ```
 
 ### 4.1 deploy_serving_to_board.sh

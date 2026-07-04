@@ -64,3 +64,4 @@ docs/phase9_openai_compat.md
 
 
 - Phase 10 stream=true SSE 流式输出说明：`docs/phase10_streaming_sse.md`
+- Phase 11 OpenAI Python SDK 示例说明：`docs/phase11_openai_sdk_examples.md`
