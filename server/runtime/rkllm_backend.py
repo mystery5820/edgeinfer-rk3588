@@ -6,7 +6,7 @@ import sys
 import threading
 import time
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, AsyncIterator, Dict, Iterator
 
 from server.runtime.prompt_policy import build_serving_prompt
 from server.runtime.rkllm_worker_backend import RKLLMPersistentWorker
@@ -211,6 +211,90 @@ class RKLLMBackend:
             "worker_max_new_tokens": worker_max_new,
             "worker_ctx": worker_ctx,
         }
+
+
+    def supports_stream(self) -> bool:
+        if self.fake_llm:
+            return True
+
+        return self.backend_mode in {"worker", "persistent", "persistent-worker"}
+
+    def _generate_stream_with_worker(
+        self,
+        *,
+        prompt: str,
+        model: Dict[str, Any],
+        max_new_tokens: int,
+        timeout_seconds: float,
+    ) -> Iterator[str]:
+        model_path = self._resolve_model_path(model)
+
+        worker_bin = os.environ.get(
+            "EDGEINFER_RKLLM_WORKER_BIN",
+            "/home/linaro/edgeinfer-rk3588-board/tools/rkllm_enhanced/"
+            "rkllm_enhanced_no_template_no_history",
+        )
+
+        worker_ctx = int(os.environ.get("EDGEINFER_RKLLM_WORKER_CTX", "1024"))
+        worker_max_new = self._worker_max_new_tokens(max_new_tokens)
+        startup_timeout = float(os.environ.get("EDGEINFER_RKLLM_WORKER_STARTUP_TIMEOUT", "60"))
+
+        worker = self._get_worker(
+            worker_bin=worker_bin,
+            model_path=str(model_path),
+            ctx=worker_ctx,
+            max_new_tokens=worker_max_new,
+            startup_timeout=startup_timeout,
+            request_timeout=timeout_seconds,
+        )
+
+        yield from worker.generate_stream(
+            self._build_prompt(prompt),
+            timeout_s=timeout_seconds,
+        )
+
+    async def generate_stream(
+        self,
+        *,
+        prompt: str,
+        model: Dict[str, Any],
+        max_new_tokens: int,
+        timeout_seconds: float,
+    ) -> AsyncIterator[str]:
+        if self.fake_llm:
+            text = (
+                "这是 EdgeInfer-RK3588 Phase 10 MVP 的假 LLM 流式输出。"
+                f" 当前模型为 {model.get('id')}，max_new_tokens={max_new_tokens}。"
+            )
+            for chunk in text:
+                await asyncio.sleep(0.02)
+                yield chunk
+            return
+
+        if self.backend_mode not in {"worker", "persistent", "persistent-worker"}:
+            raise RuntimeError("streaming is only supported by rkllm-persistent-worker backend")
+
+        iterator = self._generate_stream_with_worker(
+            prompt=prompt,
+            model=model,
+            max_new_tokens=max_new_tokens,
+            timeout_seconds=timeout_seconds,
+        )
+        sentinel = object()
+
+        def next_item() -> object:
+            try:
+                return next(iterator)
+            except StopIteration:
+                return sentinel
+
+        while True:
+            item = await asyncio.to_thread(next_item)
+            if item is sentinel:
+                break
+
+            if isinstance(item, str) and item:
+                yield item
 
     async def generate(
         self,

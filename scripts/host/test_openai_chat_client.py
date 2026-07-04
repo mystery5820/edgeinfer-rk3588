@@ -7,7 +7,7 @@ import sys
 import time
 import urllib.error
 import urllib.request
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 BOARD_URL = os.environ.get("EDGEINFER_BOARD_URL", "http://192.168.43.7:8000").rstrip("/")
 MODEL_ID = os.environ.get("EDGEINFER_MODEL_ID", "qwen3-4b-rkllm-all-npu")
@@ -61,6 +61,43 @@ def request_json(
         )
 
     return status, body
+
+
+def request_text(
+    method: str,
+    path: str,
+    payload: Optional[Dict[str, Any]] = None,
+    *,
+    expected_status: Optional[int] = None,
+) -> Tuple[int, str]:
+    url = f"{BOARD_URL}{path}"
+    data = _json_dumps(payload) if payload is not None else None
+
+    headers = {}
+    if payload is not None:
+        headers["Content-Type"] = "application/json"
+
+    req = urllib.request.Request(
+        url,
+        data=data,
+        headers=headers,
+        method=method,
+    )
+
+    try:
+        with urllib.request.urlopen(req, timeout=TIMEOUT_SECONDS) as resp:
+            status = resp.status
+            raw = resp.read().decode("utf-8", errors="replace")
+    except urllib.error.HTTPError as exc:
+        status = exc.code
+        raw = exc.read().decode("utf-8", errors="replace")
+    except urllib.error.URLError as exc:
+        raise RuntimeError(f"request failed: {url}: {exc}") from exc
+
+    if expected_status is not None and status != expected_status:
+        raise AssertionError(f"{method} {path} expected HTTP {expected_status}, got {status}: {raw!r}")
+
+    return status, raw
 
 
 def get_error_code(body: Dict[str, Any]) -> str:
@@ -175,8 +212,86 @@ def test_stop_sequences() -> None:
     print_chat_summary("stop sequences chat", body)
 
 
-def test_stream_rejected() -> None:
-    print("=== 4. stream=true rejection ===")
+def get_backend_mode() -> str:
+    _, body = request_json("GET", "/v1/metrics", expected_status=200)
+    return str(body.get("rkllm_backend", {}).get("mode", ""))
+
+
+def parse_sse_data(raw: str) -> List[str]:
+    events: List[str] = []
+
+    for block in raw.split("\n\n"):
+        for line in block.splitlines():
+            if line.startswith("data: "):
+                events.append(line[len("data: "):])
+
+    return events
+
+
+def assert_stream_success(raw: str) -> str:
+    events = parse_sse_data(raw)
+
+    if not events:
+        raise AssertionError(f"SSE response has no data events: {raw!r}")
+
+    if events[-1] != "[DONE]":
+        raise AssertionError(f"SSE response does not end with data: [DONE]: {events[-3:]!r}")
+
+    content_parts: List[str] = []
+    saw_role = False
+    saw_finish = False
+
+    for event in events:
+        if event == "[DONE]":
+            continue
+
+        try:
+            payload = json.loads(event)
+        except json.JSONDecodeError as exc:
+            raise AssertionError(f"invalid SSE JSON event: {event!r}") from exc
+
+        if "error" in payload:
+            raise AssertionError(f"SSE error event: {payload!r}")
+
+        choices = payload.get("choices") or []
+        if not choices:
+            raise AssertionError(f"SSE event has no choices: {payload!r}")
+
+        choice = choices[0]
+        delta = choice.get("delta") or {}
+
+        if delta.get("role") == "assistant":
+            saw_role = True
+
+        content = delta.get("content")
+        if isinstance(content, str):
+            content_parts.append(content)
+
+        if choice.get("finish_reason") == "stop":
+            saw_finish = True
+
+    text = "".join(content_parts)
+
+    if not saw_role:
+        raise AssertionError("SSE response did not include assistant role delta")
+
+    if not saw_finish:
+        raise AssertionError("SSE response did not include finish_reason=stop")
+
+    if not text:
+        raise AssertionError("SSE response did not include any content delta")
+
+    if text.lstrip().startswith("LLM:") or "LLM:" in text[:16]:
+        raise AssertionError(f"SSE content leaked worker prefix: {text!r}")
+
+    return text
+
+
+def test_stream_behavior() -> None:
+    print("=== 4. stream=true behavior ===")
+    backend_mode = get_backend_mode()
+    print(f"backend_mode: {backend_mode}")
+
     payload = {
         "model": MODEL_ID,
         "messages": [
@@ -185,18 +300,28 @@ def test_stream_rejected() -> None:
                 "content": "请用一句话介绍 RK3588。",
             }
         ],
-        "max_tokens": 16,
+        "max_tokens": 64,
         "stream": True,
     }
 
+    if backend_mode in {"worker", "persistent", "persistent-worker"}:
+        status, raw = request_text("POST", "/v1/chat/completions", payload, expected_status=200)
+        text = assert_stream_success(raw)
+        print(f"HTTP {status}")
+        print(f"SSE assistant_content_length: {len(text)}")
+        print(f"SSE assistant_content: {text}")
+        print("stream SSE check OK")
+        print()
+        return
+
     status, body = request_json("POST", "/v1/chat/completions", payload, expected_status=400)
     code = get_error_code(body)
-    if code != "stream_not_supported":
-        raise AssertionError(f"expected stream_not_supported, got {code!r}: {body!r}")
+    if code != "stream_backend_not_supported":
+        raise AssertionError(f"expected stream_backend_not_supported, got {code!r}: {body!r}")
 
     print(f"HTTP {status}")
     print(json.dumps(body, ensure_ascii=False, indent=2))
-    print("stream rejection check OK")
+    print("stream backend rejection check OK")
     print()
 
 
@@ -288,7 +413,7 @@ def main() -> int:
         test_health()
         test_max_tokens_chat()
         test_stop_sequences()
-        test_stream_rejected()
+        test_stream_behavior()
         test_n_rejected()
         test_top_p_rejected()
         test_response_format_rejected()

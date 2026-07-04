@@ -297,6 +297,71 @@ cd /home/linaro/edgeinfer-rk3588-board
 如果显示 `not found`，说明对应 drop-in 本来不存在，这是正常情况。
 
 ---
+### 3.3 Phase 10 stream=true SSE 模式
+
+Phase 10 在 persistent worker 模式下新增 `stream=true` SSE 流式输出能力。
+
+支持矩阵：
+
+```text
+one-shot 模式：
+  stream=false：支持普通 JSON
+  stream=true ：拒绝，HTTP 400，stream_backend_not_supported
+
+worker 模式：
+  stream=false：支持普通 JSON
+  stream=true ：支持 text/event-stream SSE
+```
+
+手动验证 worker SSE：
+
+```bash
+cat > /tmp/edgeinfer_stream_req.json <<'JSON'
+{
+  "model": "qwen3-4b-rkllm-all-npu",
+  "messages": [
+    {"role": "user", "content": "请用一句话介绍 RK3588。"}
+  ],
+  "max_tokens": 64,
+  "stream": true
+}
+JSON
+
+ssh linaro@192.168.43.7 \
+  "cd /home/linaro/edgeinfer-rk3588-board && ./scripts/board/enable_edgeinfer_worker_mode.sh"
+
+curl -N -sS \
+  -H "Content-Type: application/json" \
+  --data-binary @/tmp/edgeinfer_stream_req.json \
+  http://192.168.43.7:8000/v1/chat/completions
+```
+
+预期可以看到：
+
+```text
+data: {"...","delta":{"role":"assistant"}}
+data: {"...","delta":{"content":"R"}}
+data: {"...","delta":{"content":"K3"}}
+...
+data: {"...","delta":{},"finish_reason":"stop"}
+data: [DONE]
+```
+
+测试结束后恢复默认 one-shot：
+
+```bash
+ssh linaro@192.168.43.7 \
+  "cd /home/linaro/edgeinfer-rk3588-board && ./scripts/board/disable_edgeinfer_worker_mode.sh"
+```
+
+完整设计与验证记录见：
+
+```text
+docs/phase10_streaming_sse.md
+```
+
+---
+
 
 ## 4. Host 侧脚本
 

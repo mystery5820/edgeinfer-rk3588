@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import codecs
 import fcntl
 import os
 import select
@@ -9,6 +10,7 @@ import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Iterator
 
 
 DEFAULT_WORKER_BIN = (
@@ -286,6 +288,154 @@ class RKLLMPersistentWorker:
                     self.last_finished_at = time.time()
                     self.last_error = str(exc)
                 raise
+
+
+    @staticmethod
+    def _clean_stream_delta(text: str) -> str:
+        for token in (
+            "<|im_end|>",
+            "<|endoftext|>",
+            "<think>",
+            "</think>",
+            "＜|End of Input|＞",
+            "<|End of Input|>",
+            "\r\nYou:",
+            "\nYou:",
+            "You:",
+        ):
+            text = text.replace(token, "")
+
+        return text
+
+    @staticmethod
+    def _strip_initial_stream_prefix(text: str) -> tuple[str, bool]:
+        # Strip the interactive wrapper prefix at the beginning of a streaming
+        # response without leaking partial characters such as "L", "LL", "LLM".
+        # Return (remaining_text, done). done=False means the caller should keep
+        # buffering because the current text may still be a partial "LLM:" prefix.
+        stripped = text.lstrip("\r\n ")
+
+        if stripped == "":
+            return "", False
+
+        prefix = "LLM:"
+        if len(stripped) < len(prefix) and prefix.startswith(stripped):
+            return "", False
+
+        if stripped.startswith(prefix):
+            return stripped[len(prefix):].lstrip(), True
+
+        return stripped, True
+
+    def generate_stream(self, prompt: str, *, timeout_s: float | None = None) -> Iterator[str]:
+        with self._lock:
+            self.start()
+
+            if self.proc is None or self.proc.stdin is None or self.proc.stdout is None:
+                raise RuntimeError("worker is not started")
+
+            prompt_line = self._normalize_prompt(prompt)
+            timeout = self.request_timeout if timeout_s is None else float(timeout_s)
+
+            self._drain_stdout(timeout_s=0.3)
+
+            start = time.time()
+            with self._stats_lock:
+                self.last_started_at = start
+                self.last_finished_at = None
+                self.last_error = None
+
+            completed = False
+            prefix_done = False
+            end_markers = ("<|im_end|>", "\r\nYou:", "\nYou:")
+            max_marker_len = max(len(marker) for marker in end_markers)
+            pending = ""
+            decoder = codecs.getincrementaldecoder("utf-8")("replace")
+
+            try:
+                self.proc.stdin.write((prompt_line + "\n").encode("utf-8"))
+                self.proc.stdin.flush()
+
+                fd = self.proc.stdout.fileno()
+                deadline = time.time() + timeout
+
+                while time.time() < deadline:
+                    if self.proc.poll() is not None:
+                        raise RuntimeError(
+                            "worker exited during streaming response, "
+                            f"returncode={self.proc.returncode}"
+                        )
+
+                    remaining = max(0.0, deadline - time.time())
+                    rlist, _, _ = select.select([fd], [], [], min(0.2, remaining))
+                    if not rlist:
+                        continue
+
+                    try:
+                        data = os.read(fd, 4096)
+                    except BlockingIOError:
+                        continue
+
+                    if not data:
+                        continue
+
+                    combined = pending + decoder.decode(data, final=False)
+
+                    if not prefix_done:
+                        combined, prefix_done = self._strip_initial_stream_prefix(combined)
+                        if not prefix_done:
+                            pending = combined
+                            continue
+
+                    marker_index: int | None = None
+                    for marker in end_markers:
+                        idx = combined.find(marker)
+                        if idx >= 0 and (marker_index is None or idx < marker_index):
+                            marker_index = idx
+
+                    if marker_index is not None:
+                        piece = combined[:marker_index]
+                        delta = self._clean_stream_delta(piece)
+                        if delta:
+                            yield delta
+                        completed = True
+                        break
+
+                    safe_len = max(0, len(combined) - (max_marker_len - 1))
+                    if safe_len <= 0:
+                        pending = combined
+                        continue
+
+                    piece = combined[:safe_len]
+                    pending = combined[safe_len:]
+                    delta = self._clean_stream_delta(piece)
+                    if delta:
+                        yield delta
+
+                if not completed:
+                    raise TimeoutError(f"timeout waiting for worker streaming response after {timeout}s")
+
+                latency_ms = round((time.time() - start) * 1000.0, 3)
+
+                with self._stats_lock:
+                    self.request_count += 1
+                    self.last_latency_ms = latency_ms
+                    self.last_finished_at = time.time()
+                    self.last_error = None
+
+            except BaseException as exc:
+                latency_ms = round((time.time() - start) * 1000.0, 3)
+                with self._stats_lock:
+                    self.request_count += 1
+                    self.failed_request_count += 1
+                    self.last_latency_ms = latency_ms
+                    self.last_finished_at = time.time()
+                    self.last_error = str(exc)
+                raise
+
+            finally:
+                if not completed and self.proc is not None and self.proc.poll() is None:
+                    self.stop()
 
     def snapshot(self) -> dict:
         proc = self.proc

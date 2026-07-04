@@ -2,6 +2,8 @@
 
 本文档记录 EdgeInfer-RK3588 Phase 9 Serving Framework 当前 `/v1/chat/completions` 接口对 OpenAI Chat Completions 风格 API 的兼容范围、请求字段、响应字段、错误响应和当前限制。
 
+更新说明：Phase 10 已在 RKLLM persistent worker 模式下新增 `stream=true` SSE 流式输出能力；默认 one-shot 模式仍拒绝 `stream=true`。完整设计与验证记录见 `docs/phase10_streaming_sse.md`。
+
 当前目标不是完整复刻 OpenAI API，而是在 RK3588 板端 RKLLM 后端能力范围内，提供一个足够接近 OpenAI Chat Completions 的最小可用接口，便于后续接入 Web UI、脚本客户端和 OpenAI SDK 风格调用。
 
 ---
@@ -346,7 +348,7 @@ top_p_not_supported
 boolean，可选
 ```
 
-当前只支持：
+默认值：
 
 ```json
 {
@@ -354,21 +356,56 @@ boolean，可选
 }
 ```
 
-如果传入：
+当前支持状态：
+
+```text
+one-shot 模式：
+  stream=false：支持，返回普通 JSON
+  stream=true ：拒绝，HTTP 400，错误码 stream_backend_not_supported
+
+persistent worker 模式：
+  stream=false：支持，返回普通 JSON
+  stream=true ：支持，返回 text/event-stream SSE
+```
+
+`stream=true` 示例请求：
 
 ```json
 {
+  "model": "qwen3-4b-rkllm-all-npu",
+  "messages": [
+    {"role": "user", "content": "请用一句话介绍 RK3588。"}
+  ],
+  "max_tokens": 64,
   "stream": true
 }
 ```
 
-接口返回 HTTP 400：
+worker 模式下返回 OpenAI-like SSE chunk：
 
 ```text
-stream_not_supported
+data: {"id":"chatcmpl-...","object":"chat.completion.chunk","created":...,"model":"qwen3-4b-rkllm-all-npu","choices":[{"index":0,"delta":{"role":"assistant"},"finish_reason":null}],"edgeinfer":{"backend":"rkllm-persistent-worker","stream":true}}
+
+data: {"id":"chatcmpl-...","object":"chat.completion.chunk","created":...,"model":"qwen3-4b-rkllm-all-npu","choices":[{"index":0,"delta":{"content":"RK"},"finish_reason":null}]}
+
+data: {"id":"chatcmpl-...","object":"chat.completion.chunk","created":...,"model":"qwen3-4b-rkllm-all-npu","choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"edgeinfer":{"backend":"rkllm-persistent-worker","stream":true,"stop":{"requested":[],"matched":null}}}
+
+data: [DONE]
 ```
 
-原因：Phase 9 MVP 当前只实现非流式响应，暂未实现 Server-Sent Events 流式输出。
+one-shot 模式下返回 HTTP 400：
+
+```text
+stream_backend_not_supported
+```
+
+原因：one-shot runner 当前仍通过完整子进程调用一次性获得输出，不能提供真实增量 SSE；persistent worker 使用 stdout pipe 增量读取，Phase 10 已支持真实流式输出。
+
+完整实现说明见：
+
+```text
+docs/phase10_streaming_sse.md
+```
 
 ---
 
@@ -546,7 +583,7 @@ matched    本次实际命中的 stop sequence；如果没有命中则为 null
 
 | HTTP | code | 说明 |
 |---:|---|---|
-| 400 | stream_not_supported | 当前不支持 `stream=true` |
+| 400 | stream_backend_not_supported | 当前 backend 不支持 `stream=true`，one-shot 模式下会返回该错误 |
 | 400 | token_limit_conflict | `max_tokens` 和 `max_new_tokens` 同时传入且值不同 |
 | 400 | invalid_stop | `stop` 不是非空字符串或非空字符串数组 |
 | 400 | n_not_supported | 当前只支持 `n=1` |
@@ -583,7 +620,7 @@ parallel_tool_calls
 
 ```text
 这些字段后续可以逐步加入请求模型、参数校验和测试用例。
-其中 stream=true 需要实现 SSE 流式输出；
+其中 `stream=true` 已在 persistent worker 模式实现 SSE；one-shot 模式仍会拒绝。
 tools / tool_choice 需要额外设计工具调用协议；
 usage token 统计需要 tokenizer 或 RKLLM runtime 侧统计能力支持。
 ```

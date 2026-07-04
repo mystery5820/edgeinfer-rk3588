@@ -11,6 +11,7 @@ RUN_STOP_COMPAT="${EDGEINFER_SMOKE_STOP_COMPAT:-1}"
 RUN_N_COMPAT="${EDGEINFER_SMOKE_N_COMPAT:-1}"
 RUN_TOP_P_COMPAT="${EDGEINFER_SMOKE_TOP_P_COMPAT:-1}"
 RUN_RESPONSE_FORMAT_COMPAT="${EDGEINFER_SMOKE_RESPONSE_FORMAT_COMPAT:-1}"
+RUN_STREAM_COMPAT="${EDGEINFER_SMOKE_STREAM_COMPAT:-1}"
 EXPECT_BACKEND="${EDGEINFER_EXPECT_BACKEND:-}"
 EXPECT_BACKEND_MODE="${EDGEINFER_EXPECT_BACKEND_MODE:-}"
 
@@ -27,6 +28,7 @@ echo "RUN_STOP_COMPAT=${RUN_STOP_COMPAT}"
 echo "RUN_N_COMPAT=${RUN_N_COMPAT}"
 echo "RUN_TOP_P_COMPAT=${RUN_TOP_P_COMPAT}"
 echo "RUN_RESPONSE_FORMAT_COMPAT=${RUN_RESPONSE_FORMAT_COMPAT}"
+echo "RUN_STREAM_COMPAT=${RUN_STREAM_COMPAT}"
 echo "EXPECT_BACKEND=${EXPECT_BACKEND:-<not checked>}"
 echo "EXPECT_BACKEND_MODE=${EXPECT_BACKEND_MODE:-<auto>}"
 echo
@@ -214,6 +216,105 @@ print(
     f"mode={actual_mode}, worker_enabled={worker_enabled}, worker_started={runtime_state}"
 )
 ' "${json_file}" "${expected_mode}" "${label}" "${require_worker_started}"
+}
+
+assert_stream_sse() {
+  local sse_file="$1"
+  local expected_backend="$2"
+
+  python3 - "${sse_file}" "${expected_backend}" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+sse_file = Path(sys.argv[1])
+expected_backend = sys.argv[2]
+
+raw = sse_file.read_text(encoding="utf-8", errors="replace")
+events = []
+
+for block in raw.split("\n\n"):
+    for line in block.splitlines():
+        if line.startswith("data: "):
+            events.append(line[len("data: "):])
+
+if not events:
+    print(f"ERROR: SSE response has no data events: {raw!r}", file=sys.stderr)
+    sys.exit(1)
+
+if events[-1] != "[DONE]":
+    print(f"ERROR: SSE response does not end with data: [DONE], tail={events[-3:]!r}", file=sys.stderr)
+    sys.exit(1)
+
+content_parts = []
+saw_role = False
+saw_finish = False
+seen_backend = ""
+
+for event in events:
+    if event == "[DONE]":
+        continue
+
+    try:
+        payload = json.loads(event)
+    except json.JSONDecodeError as exc:
+        print(f"ERROR: invalid SSE JSON event: {event!r}: {exc}", file=sys.stderr)
+        sys.exit(1)
+
+    if "error" in payload:
+        print(f"ERROR: SSE error event: {payload!r}", file=sys.stderr)
+        sys.exit(1)
+
+    edgeinfer = payload.get("edgeinfer")
+    if isinstance(edgeinfer, dict) and edgeinfer.get("backend"):
+        seen_backend = str(edgeinfer.get("backend"))
+
+    choices = payload.get("choices") or []
+    if not choices:
+        print(f"ERROR: SSE event has no choices: {payload!r}", file=sys.stderr)
+        sys.exit(1)
+
+    choice = choices[0]
+    delta = choice.get("delta") or {}
+
+    if delta.get("role") == "assistant":
+        saw_role = True
+
+    content = delta.get("content")
+    if isinstance(content, str):
+        content_parts.append(content)
+
+    if choice.get("finish_reason") == "stop":
+        saw_finish = True
+
+text = "".join(content_parts)
+
+if expected_backend and seen_backend and seen_backend != expected_backend:
+    print(
+        f"ERROR: SSE backend mismatch: expected {expected_backend!r}, got {seen_backend!r}",
+        file=sys.stderr,
+    )
+    sys.exit(1)
+
+if not saw_role:
+    print("ERROR: SSE response did not include assistant role delta", file=sys.stderr)
+    sys.exit(1)
+
+if not saw_finish:
+    print("ERROR: SSE response did not include finish_reason=stop", file=sys.stderr)
+    sys.exit(1)
+
+if not text:
+    print("ERROR: SSE response did not include any content delta", file=sys.stderr)
+    sys.exit(1)
+
+if text.lstrip().startswith("LLM:") or "LLM:" in text[:16]:
+    print(f"ERROR: SSE content leaked worker prefix: {text!r}", file=sys.stderr)
+    sys.exit(1)
+
+print(f"stream SSE check OK: content_length={len(text)}")
+print(f"stream SSE content: {text}")
+PY
 }
 
 echo "=== 1. health ==="
@@ -473,6 +574,66 @@ JSON
     echo "response_format parameter check OK"
   else
     echo "=== 4f. response_format parameter compatibility skipped ==="
+  fi
+
+  if [ "${RUN_STREAM_COMPAT}" = "1" ]; then
+    echo "=== 4g. stream parameter compatibility ==="
+
+    STREAM_REQ="${TMP_DIR}/stream_req.json"
+    STREAM_OUT="${TMP_DIR}/stream_out.txt"
+    STREAM_CODE="${TMP_DIR}/stream_code.txt"
+
+    cat > "${STREAM_REQ}" <<JSON
+{
+  "model": "${MODEL_ID}",
+  "messages": [
+    {"role": "user", "content": "请用一句话介绍 RK3588。"}
+  ],
+  "max_tokens": 64,
+  "stream": true
+}
+JSON
+
+    EXPECTED_MODE="$(infer_expected_backend_mode)"
+
+    if [ "${EXPECTED_MODE}" = "worker" ]; then
+      echo "--- stream SSE request ---"
+      curl -sS -N -o "${STREAM_OUT}" -w "%{http_code}"         -X POST "${BOARD_URL}/v1/chat/completions"         -H "Content-Type: application/json"         --data-binary @"${STREAM_REQ}" > "${STREAM_CODE}"
+
+      STREAM_CODE_VALUE="$(cat "${STREAM_CODE}")"
+      echo "stream HTTP ${STREAM_CODE_VALUE}"
+      cat "${STREAM_OUT}"
+      echo
+
+      if [ "${STREAM_CODE_VALUE}" != "200" ]; then
+        echo "ERROR: expected stream=true to return HTTP 200 in worker mode, got ${STREAM_CODE_VALUE}" >&2
+        exit 1
+      fi
+
+      assert_stream_sse "${STREAM_OUT}" "${EXPECT_BACKEND}"
+    else
+      echo "--- stream unsupported request ---"
+      curl -sS -o "${STREAM_OUT}" -w "%{http_code}"         -X POST "${BOARD_URL}/v1/chat/completions"         -H "Content-Type: application/json"         --data-binary @"${STREAM_REQ}" > "${STREAM_CODE}"
+
+      STREAM_CODE_VALUE="$(cat "${STREAM_CODE}")"
+      echo "stream unsupported HTTP ${STREAM_CODE_VALUE}"
+      python3 -m json.tool "${STREAM_OUT}" || cat "${STREAM_OUT}"
+      echo
+
+      if [ "${STREAM_CODE_VALUE}" != "400" ]; then
+        echo "ERROR: expected stream=true to return HTTP 400 outside worker mode, got ${STREAM_CODE_VALUE}" >&2
+        exit 1
+      fi
+
+      if ! grep -q "stream_backend_not_supported" "${STREAM_OUT}"; then
+        echo "ERROR: stream=true response does not contain stream_backend_not_supported" >&2
+        exit 1
+      fi
+
+      echo "stream backend rejection check OK"
+    fi
+  else
+    echo "=== 4g. stream parameter compatibility skipped ==="
   fi
 else
   echo "=== 4. single chat completion skipped ==="

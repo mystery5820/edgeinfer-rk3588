@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import asyncio
+import json
 import os
 import time
 import uuid
-from typing import List, Literal, Optional, Union
+from typing import AsyncIterator, Dict, List, Literal, Optional, Union
 
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from server.model_manager.registry import ModelRegistry
@@ -207,20 +210,255 @@ def _validate_n(req: ChatCompletionRequest) -> None:
         ),
     )
 
+def _json_sse(payload: Dict[str, object]) -> str:
+    return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
 
-@router.post("/chat/completions")
-async def chat_completions(req: ChatCompletionRequest):
-    if req.stream:
+
+def _done_sse() -> str:
+    return "data: [DONE]\n\n"
+
+
+def _stream_chunk(
+    *,
+    chunk_id: str,
+    created: int,
+    model_id: str,
+    delta: Dict[str, object],
+    finish_reason: Optional[str] = None,
+    edgeinfer: Optional[Dict[str, object]] = None,
+) -> Dict[str, object]:
+    payload: Dict[str, object] = {
+        "id": chunk_id,
+        "object": "chat.completion.chunk",
+        "created": created,
+        "model": model_id,
+        "choices": [
+            {
+                "index": 0,
+                "delta": delta,
+                "finish_reason": finish_reason,
+            }
+        ],
+    }
+
+    if edgeinfer is not None:
+        payload["edgeinfer"] = edgeinfer
+
+    return payload
+
+
+def _filter_stream_delta(
+    *,
+    delta: str,
+    stop_sequences: List[str],
+    pending: str,
+) -> tuple[Optional[str], str, Optional[str]]:
+    if not stop_sequences:
+        return delta, "", None
+
+    combined = pending + delta
+
+    earliest_index: Optional[int] = None
+    matched_stop: Optional[str] = None
+
+    for stop_sequence in stop_sequences:
+        idx = combined.find(stop_sequence)
+        if idx >= 0 and (earliest_index is None or idx < earliest_index):
+            earliest_index = idx
+            matched_stop = stop_sequence
+
+    if earliest_index is not None:
+        return combined[:earliest_index], "", matched_stop
+
+    keep = max(0, max(len(s) for s in stop_sequences) - 1)
+    if keep <= 0:
+        return combined, "", None
+
+    safe_len = max(0, len(combined) - keep)
+    return combined[:safe_len], combined[safe_len:], None
+
+
+async def _stream_chat_events(
+    *,
+    req: ChatCompletionRequest,
+    backend: RKLLMBackend,
+    prompt: str,
+    model: Dict[str, object],
+    model_id: str,
+    effective_max_new_tokens: int,
+    stop_sequences: List[str],
+    lease,
+) -> AsyncIterator[str]:
+    chunk_id = f"chatcmpl-{uuid.uuid4().hex[:12]}"
+    created = int(time.time())
+    matched_stop: Optional[str] = None
+    pending_stop = ""
+    stream_stopped = False
+    success = False
+
+    try:
+        yield _json_sse(
+            _stream_chunk(
+                chunk_id=chunk_id,
+                created=created,
+                model_id=model_id,
+                delta={"role": "assistant"},
+                finish_reason=None,
+                edgeinfer={
+                    "backend": _configured_rkllm_backend_name(),
+                    "stream": True,
+                },
+            )
+        )
+
+        async for raw_delta in backend.generate_stream(
+            prompt=prompt,
+            model=model,
+            max_new_tokens=effective_max_new_tokens,
+            timeout_seconds=LLM_TIMEOUT_SECONDS,
+        ):
+            if stream_stopped:
+                continue
+
+            delta, pending_stop, matched = _filter_stream_delta(
+                delta=raw_delta,
+                stop_sequences=stop_sequences,
+                pending=pending_stop,
+            )
+
+            if matched is not None:
+                matched_stop = matched
+                stream_stopped = True
+
+            if delta:
+                yield _json_sse(
+                    _stream_chunk(
+                        chunk_id=chunk_id,
+                        created=created,
+                        model_id=model_id,
+                        delta={"content": delta},
+                        finish_reason=None,
+                    )
+                )
+
+        if not stream_stopped and pending_stop:
+            yield _json_sse(
+                _stream_chunk(
+                    chunk_id=chunk_id,
+                    created=created,
+                    model_id=model_id,
+                    delta={"content": pending_stop},
+                    finish_reason=None,
+                )
+            )
+
+        yield _json_sse(
+            _stream_chunk(
+                chunk_id=chunk_id,
+                created=created,
+                model_id=model_id,
+                delta={},
+                finish_reason="stop",
+                edgeinfer={
+                    "backend": _configured_rkllm_backend_name(),
+                    "stream": True,
+                    "stop": {
+                        "requested": stop_sequences,
+                        "matched": matched_stop,
+                    },
+                },
+            )
+        )
+        yield _done_sse()
+
+        success = True
+        lease.finish_success()
+
+    except asyncio.CancelledError as exc:
+        lease.finish_error(exc)
+        raise
+
+    except Exception as exc:
+        lease.finish_error(exc)
+        error_payload: Dict[str, object] = {
+            "error": {
+                "code": "rkllm_stream_runtime_error",
+                "message": str(exc),
+                "type": "edgeinfer_error",
+                "retryable": False,
+            },
+            "edgeinfer": {
+                "model": model_id,
+                "backend": _configured_rkllm_backend_name(),
+                "stream": True,
+                "llm": llm_queue.snapshot(),
+            },
+        }
+        yield _json_sse(error_payload)
+        yield _done_sse()
+
+    finally:
+        if not success and not lease.released:
+            lease.finish_error("stream closed before completion")
+
+
+async def _stream_chat_completion(
+    *,
+    req: ChatCompletionRequest,
+    backend: RKLLMBackend,
+    prompt: str,
+    model: Dict[str, object],
+    model_id: str,
+    effective_max_new_tokens: int,
+    stop_sequences: List[str],
+):
+    if not backend.supports_stream():
         raise HTTPException(
             status_code=400,
             detail=_error_detail(
-                code="stream_not_supported",
-                message="stream=true is not supported in Phase 9 MVP",
-                model_id=req.model,
+                code="stream_backend_not_supported",
+                message="stream=true currently requires rkllm-persistent-worker backend",
+                model_id=model_id,
                 retryable=False,
             ),
         )
 
+    try:
+        lease = await llm_queue.acquire_nowait(model_id=model_id)
+    except LLMQueueBusyError as e:
+        raise HTTPException(
+            status_code=429,
+            detail=_error_detail(
+                code="llm_backend_busy",
+                message=str(e),
+                model_id=model_id,
+                retryable=True,
+            ),
+        )
+
+    return StreamingResponse(
+        _stream_chat_events(
+            req=req,
+            backend=backend,
+            prompt=prompt,
+            model=model,
+            model_id=model_id,
+            effective_max_new_tokens=effective_max_new_tokens,
+            stop_sequences=stop_sequences,
+            lease=lease,
+        ),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+
+
+@router.post("/chat/completions")
+async def chat_completions(req: ChatCompletionRequest):
     _validate_n(req)
     _validate_top_p(req)
     _validate_response_format(req)
@@ -258,6 +496,17 @@ async def chat_completions(req: ChatCompletionRequest):
 
     prompt = render_prompt(req.messages)
     backend = RKLLMBackend()
+
+    if req.stream:
+        return await _stream_chat_completion(
+            req=req,
+            backend=backend,
+            prompt=prompt,
+            model=model,
+            model_id=model_id,
+            effective_max_new_tokens=effective_max_new_tokens,
+            stop_sequences=stop_sequences,
+        )
 
     try:
         result = await llm_queue.run_nowait(

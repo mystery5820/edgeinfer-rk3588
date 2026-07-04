@@ -62,3 +62,5 @@ OpenAI-like Chat API 兼容说明见：
 docs/phase9_openai_compat.md
 ```
 
+
+- Phase 10 stream=true SSE 流式输出说明：`docs/phase10_streaming_sse.md`
