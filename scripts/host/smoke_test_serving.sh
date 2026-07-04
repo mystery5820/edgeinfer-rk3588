@@ -9,6 +9,7 @@ RUN_BUSY="${EDGEINFER_SMOKE_BUSY:-1}"
 RUN_MAX_TOKENS_COMPAT="${EDGEINFER_SMOKE_MAX_TOKENS_COMPAT:-1}"
 RUN_STOP_COMPAT="${EDGEINFER_SMOKE_STOP_COMPAT:-1}"
 RUN_N_COMPAT="${EDGEINFER_SMOKE_N_COMPAT:-1}"
+RUN_TOP_P_COMPAT="${EDGEINFER_SMOKE_TOP_P_COMPAT:-1}"
 EXPECT_BACKEND="${EDGEINFER_EXPECT_BACKEND:-}"
 EXPECT_BACKEND_MODE="${EDGEINFER_EXPECT_BACKEND_MODE:-}"
 
@@ -23,6 +24,7 @@ echo "RUN_BUSY=${RUN_BUSY}"
 echo "RUN_MAX_TOKENS_COMPAT=${RUN_MAX_TOKENS_COMPAT}"
 echo "RUN_STOP_COMPAT=${RUN_STOP_COMPAT}"
 echo "RUN_N_COMPAT=${RUN_N_COMPAT}"
+echo "RUN_TOP_P_COMPAT=${RUN_TOP_P_COMPAT}"
 echo "EXPECT_BACKEND=${EXPECT_BACKEND:-<not checked>}"
 echo "EXPECT_BACKEND_MODE=${EXPECT_BACKEND_MODE:-<auto>}"
 echo
@@ -256,7 +258,8 @@ JSON
     {"role": "user", "content": "请用一句话介绍 RK3588。"}
   ],
   "max_tokens": 32,
-  "n": 1
+  "n": 1,
+  "top_p": 1.0
 }
 JSON
 
@@ -383,6 +386,50 @@ JSON
   else
     echo "=== 4d. n parameter compatibility skipped ==="
   fi
+
+  if [ "${RUN_TOP_P_COMPAT}" = "1" ]; then
+    echo "=== 4e. top_p parameter compatibility ==="
+
+    TOP_P_UNSUPPORTED_REQ="${TMP_DIR}/top_p_unsupported_req.json"
+    TOP_P_UNSUPPORTED_OUT="${TMP_DIR}/top_p_unsupported_out.json"
+    TOP_P_UNSUPPORTED_CODE="${TMP_DIR}/top_p_unsupported_code.txt"
+
+    cat > "${TOP_P_UNSUPPORTED_REQ}" <<JSON
+{
+  "model": "${MODEL_ID}",
+  "messages": [
+    {"role": "user", "content": "请用一句话介绍 RK3588。"}
+  ],
+  "max_tokens": 16,
+  "top_p": 0.9
+}
+JSON
+
+    echo "--- top_p unsupported request ---"
+    curl -sS -o "${TOP_P_UNSUPPORTED_OUT}" -w "%{http_code}" \
+      -X POST "${BOARD_URL}/v1/chat/completions" \
+      -H "Content-Type: application/json" \
+      -d @"${TOP_P_UNSUPPORTED_REQ}" > "${TOP_P_UNSUPPORTED_CODE}"
+
+    TOP_P_UNSUPPORTED_CODE_VALUE="$(cat "${TOP_P_UNSUPPORTED_CODE}")"
+    echo "top_p unsupported HTTP ${TOP_P_UNSUPPORTED_CODE_VALUE}"
+    python3 -m json.tool "${TOP_P_UNSUPPORTED_OUT}" || cat "${TOP_P_UNSUPPORTED_OUT}"
+    echo
+
+    if [ "${TOP_P_UNSUPPORTED_CODE_VALUE}" != "400" ]; then
+      echo "ERROR: expected top_p=0.9 to return HTTP 400, got ${TOP_P_UNSUPPORTED_CODE_VALUE}" >&2
+      exit 1
+    fi
+
+    if ! grep -q "top_p_not_supported" "${TOP_P_UNSUPPORTED_OUT}"; then
+      echo "ERROR: top_p=0.9 response does not contain top_p_not_supported" >&2
+      exit 1
+    fi
+
+    echo "top_p parameter check OK"
+  else
+    echo "=== 4e. top_p parameter compatibility skipped ==="
+  fi
 else
   echo "=== 4. single chat completion skipped ==="
 fi
@@ -430,10 +477,9 @@ JSON
       -H "Content-Type: application/json" \
       -d @"${REQ1}" > "${CODE1}"
   ) &
+  FIRST_PID="$!"
 
-  PID1=$!
-
-  sleep 2
+  sleep 1
 
   echo "--- launch second request while first is running ---"
   curl -sS -o "${OUT2}" -w "%{http_code}" \
@@ -447,27 +493,26 @@ JSON
   echo
 
   if [ "${CODE2_VALUE}" != "429" ]; then
-    echo "ERROR: expected second request to return HTTP 429 busy, got ${CODE2_VALUE}" >&2
-    wait "${PID1}" || true
+    echo "ERROR: expected second request to be rejected with HTTP 429, got ${CODE2_VALUE}" >&2
+    wait "${FIRST_PID}" || true
     exit 1
   fi
 
   if ! grep -q "llm_backend_busy" "${OUT2}"; then
-    echo "ERROR: second response does not contain llm_backend_busy" >&2
-    wait "${PID1}" || true
+    echo "ERROR: second request response does not contain llm_backend_busy" >&2
+    wait "${FIRST_PID}" || true
     exit 1
   fi
 
   echo "--- wait first request ---"
-  wait "${PID1}" || true
-
+  wait "${FIRST_PID}"
   CODE1_VALUE="$(cat "${CODE1}")"
   echo "first HTTP ${CODE1_VALUE}"
   python3 -m json.tool "${OUT1}" || cat "${OUT1}"
   echo
 
   if [ "${CODE1_VALUE}" != "200" ]; then
-    echo "ERROR: expected first request to return HTTP 200, got ${CODE1_VALUE}" >&2
+    echo "ERROR: expected first request to finish with HTTP 200, got ${CODE1_VALUE}" >&2
     exit 1
   fi
 
@@ -478,10 +523,6 @@ fi
 
 echo "=== 7. metrics after busy test ==="
 curl_json GET "${BOARD_URL}/v1/metrics"
-FINAL_REQUIRE_WORKER_STARTED="0"
-if [ "${RUN_CHAT}" = "1" ] || [ "${RUN_BUSY}" = "1" ]; then
-  FINAL_REQUIRE_WORKER_STARTED="1"
-fi
-assert_metrics_backend "${TMP_DIR}/response.json" "metrics after busy test" "${FINAL_REQUIRE_WORKER_STARTED}"
+assert_metrics_backend "${TMP_DIR}/response.json" "metrics after busy test" "${RUN_CHAT}"
 
 echo "=== Smoke test passed ==="

@@ -312,7 +312,33 @@ float，可选，范围 0.0-2.0
 
 ---
 
-### 3.9 stream
+### 3.9 top_p
+
+类型：
+
+```text
+float，可选，范围 0.0-1.0，当前只支持 1.0
+```
+
+当前 Phase 9 MVP 中，`top_p` 尚未真正下传到 RKLLM runtime 参数，因此只接受：
+
+```json
+{
+  "top_p": 1.0
+}
+```
+
+如果传入 `top_p` 不等于 `1.0`，接口返回 HTTP 400：
+
+```text
+top_p_not_supported
+```
+
+这样可以兼容外部客户端默认携带的 `top_p=1.0`，同时避免误以为服务已经支持采样控制。
+
+---
+
+### 3.10 stream
 
 类型：
 
@@ -495,6 +521,8 @@ matched    本次实际命中的 stop sequence；如果没有命中则为 null
 | 400 | stream_not_supported | 当前不支持 `stream=true` |
 | 400 | token_limit_conflict | `max_tokens` 和 `max_new_tokens` 同时传入且值不同 |
 | 400 | invalid_stop | `stop` 不是非空字符串或非空字符串数组 |
+| 400 | n_not_supported | 当前只支持 `n=1` |
+| 400 | top_p_not_supported | 当前只支持 `top_p=1.0` |
 | 400 | model_not_llm | 选择的模型不是 LLM 任务 |
 | 404 | model_not_found | 模型不存在 |
 | 429 | llm_backend_busy | LLM 后端正在处理请求，当前策略为 busy 直接拒绝 |
@@ -509,7 +537,6 @@ matched    本次实际命中的 stop sequence；如果没有命中则为 null
 
 ```text
 stream=true
-top_p
 presence_penalty
 frequency_penalty
 logit_bias
