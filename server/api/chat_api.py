@@ -26,6 +26,10 @@ class ChatMessage(BaseModel):
     content: str
 
 
+class ResponseFormat(BaseModel):
+    type: Literal["text", "json_object"]
+
+
 class ChatCompletionRequest(BaseModel):
     model: Optional[str] = Field(default="qwen3-4b-rkllm-all-npu")
     messages: List[ChatMessage]
@@ -36,6 +40,7 @@ class ChatCompletionRequest(BaseModel):
     n: int = Field(default=1, ge=1)
     stream: bool = False
     stop: Optional[Union[str, List[str]]] = None
+    response_format: Optional[ResponseFormat] = None
 
 
 def render_prompt(messages: List[ChatMessage]) -> str:
@@ -155,6 +160,24 @@ def _apply_stop_sequences(text: str, stop_sequences: List[str]) -> tuple[str, Op
     return text[:earliest_index], matched_stop
 
 
+def _validate_response_format(req: ChatCompletionRequest) -> None:
+    if req.response_format is None:
+        return
+
+    if req.response_format.type == "text":
+        return
+
+    raise HTTPException(
+        status_code=400,
+        detail=_error_detail(
+            code="response_format_not_supported",
+            message="response_format values other than {'type': 'text'} are not supported in Phase 9 MVP",
+            model_id=req.model,
+            retryable=False,
+        ),
+    )
+
+
 def _validate_top_p(req: ChatCompletionRequest) -> None:
     if abs(float(req.top_p) - 1.0) < 1e-9:
         return
@@ -200,6 +223,7 @@ async def chat_completions(req: ChatCompletionRequest):
 
     _validate_n(req)
     _validate_top_p(req)
+    _validate_response_format(req)
 
     effective_max_new_tokens = _effective_max_new_tokens(req)
     stop_sequences = _normalize_stop_sequences(req)

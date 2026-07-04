@@ -127,6 +127,7 @@ def test_max_tokens_chat() -> None:
         "max_tokens": 48,
         "n": 1,
         "top_p": 1.0,
+        "response_format": {"type": "text"},
     }
 
     _, body = request_json("POST", "/v1/chat/completions", payload, expected_status=200)
@@ -249,6 +250,31 @@ def test_top_p_rejected() -> None:
     print()
 
 
+def test_response_format_rejected() -> None:
+    print("=== 7. response_format json_object rejection ===")
+    payload = {
+        "model": MODEL_ID,
+        "messages": [
+            {
+                "role": "user",
+                "content": "请用一句话介绍 RK3588。",
+            }
+        ],
+        "max_tokens": 16,
+        "response_format": {"type": "json_object"},
+    }
+
+    status, body = request_json("POST", "/v1/chat/completions", payload, expected_status=400)
+    code = get_error_code(body)
+    if code != "response_format_not_supported":
+        raise AssertionError(f"expected response_format_not_supported, got {code!r}: {body!r}")
+
+    print(f"HTTP {status}")
+    print(json.dumps(body, ensure_ascii=False, indent=2))
+    print("response_format rejection check OK")
+    print()
+
+
 def main() -> int:
     started = time.time()
 
@@ -265,6 +291,7 @@ def main() -> int:
         test_stream_rejected()
         test_n_rejected()
         test_top_p_rejected()
+        test_response_format_rejected()
     except Exception as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 1

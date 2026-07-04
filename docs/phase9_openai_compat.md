@@ -372,6 +372,34 @@ stream_not_supported
 
 ---
 
+### 3.11 response_format
+
+类型：
+
+```text
+object，可选，当前只支持 {"type": "text"}
+```
+
+OpenAI Chat Completions 中，`response_format` 用于声明期望的输出格式。当前 Phase 9 MVP 只输出普通文本，因此只接受：
+
+```json
+{
+  "response_format": {
+    "type": "text"
+  }
+}
+```
+
+如果传入 `json_object` 或其他类型，接口返回 HTTP 400：
+
+```text
+response_format_not_supported
+```
+
+这样可以兼容外部客户端显式声明文本输出，同时避免误以为当前服务已经支持 JSON mode。
+
+---
+
 ## 4. 响应格式
 
 成功响应示例：
@@ -523,6 +551,7 @@ matched    本次实际命中的 stop sequence；如果没有命中则为 null
 | 400 | invalid_stop | `stop` 不是非空字符串或非空字符串数组 |
 | 400 | n_not_supported | 当前只支持 `n=1` |
 | 400 | top_p_not_supported | 当前只支持 `top_p=1.0` |
+| 400 | response_format_not_supported | 当前只支持 `response_format.type=text` |
 | 400 | model_not_llm | 选择的模型不是 LLM 任务 |
 | 404 | model_not_found | 模型不存在 |
 | 429 | llm_backend_busy | LLM 后端正在处理请求，当前策略为 busy 直接拒绝 |
@@ -547,7 +576,6 @@ user
 tools
 tool_choice
 function_call
-response_format
 parallel_tool_calls
 ```
 

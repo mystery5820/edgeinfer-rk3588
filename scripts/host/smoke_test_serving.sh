@@ -10,6 +10,7 @@ RUN_MAX_TOKENS_COMPAT="${EDGEINFER_SMOKE_MAX_TOKENS_COMPAT:-1}"
 RUN_STOP_COMPAT="${EDGEINFER_SMOKE_STOP_COMPAT:-1}"
 RUN_N_COMPAT="${EDGEINFER_SMOKE_N_COMPAT:-1}"
 RUN_TOP_P_COMPAT="${EDGEINFER_SMOKE_TOP_P_COMPAT:-1}"
+RUN_RESPONSE_FORMAT_COMPAT="${EDGEINFER_SMOKE_RESPONSE_FORMAT_COMPAT:-1}"
 EXPECT_BACKEND="${EDGEINFER_EXPECT_BACKEND:-}"
 EXPECT_BACKEND_MODE="${EDGEINFER_EXPECT_BACKEND_MODE:-}"
 
@@ -25,6 +26,7 @@ echo "RUN_MAX_TOKENS_COMPAT=${RUN_MAX_TOKENS_COMPAT}"
 echo "RUN_STOP_COMPAT=${RUN_STOP_COMPAT}"
 echo "RUN_N_COMPAT=${RUN_N_COMPAT}"
 echo "RUN_TOP_P_COMPAT=${RUN_TOP_P_COMPAT}"
+echo "RUN_RESPONSE_FORMAT_COMPAT=${RUN_RESPONSE_FORMAT_COMPAT}"
 echo "EXPECT_BACKEND=${EXPECT_BACKEND:-<not checked>}"
 echo "EXPECT_BACKEND_MODE=${EXPECT_BACKEND_MODE:-<auto>}"
 echo
@@ -259,7 +261,8 @@ JSON
   ],
   "max_tokens": 32,
   "n": 1,
-  "top_p": 1.0
+  "top_p": 1.0,
+  "response_format": {"type": "text"}
 }
 JSON
 
@@ -429,6 +432,47 @@ JSON
     echo "top_p parameter check OK"
   else
     echo "=== 4e. top_p parameter compatibility skipped ==="
+  fi
+
+  if [ "${RUN_RESPONSE_FORMAT_COMPAT}" = "1" ]; then
+    echo "=== 4f. response_format parameter compatibility ==="
+
+    RESPONSE_FORMAT_UNSUPPORTED_REQ="${TMP_DIR}/response_format_unsupported_req.json"
+    RESPONSE_FORMAT_UNSUPPORTED_OUT="${TMP_DIR}/response_format_unsupported_out.json"
+    RESPONSE_FORMAT_UNSUPPORTED_CODE="${TMP_DIR}/response_format_unsupported_code.txt"
+
+    cat > "${RESPONSE_FORMAT_UNSUPPORTED_REQ}" <<JSON
+{
+  "model": "${MODEL_ID}",
+  "messages": [
+    {"role": "user", "content": "请用一句话介绍 RK3588。"}
+  ],
+  "max_tokens": 16,
+  "response_format": {"type": "json_object"}
+}
+JSON
+
+    echo "--- response_format unsupported request ---"
+    curl -sS -o "${RESPONSE_FORMAT_UNSUPPORTED_OUT}" -w "%{http_code}"       -X POST "${BOARD_URL}/v1/chat/completions"       -H "Content-Type: application/json"       -d @"${RESPONSE_FORMAT_UNSUPPORTED_REQ}" > "${RESPONSE_FORMAT_UNSUPPORTED_CODE}"
+
+    RESPONSE_FORMAT_UNSUPPORTED_CODE_VALUE="$(cat "${RESPONSE_FORMAT_UNSUPPORTED_CODE}")"
+    echo "response_format unsupported HTTP ${RESPONSE_FORMAT_UNSUPPORTED_CODE_VALUE}"
+    python3 -m json.tool "${RESPONSE_FORMAT_UNSUPPORTED_OUT}" || cat "${RESPONSE_FORMAT_UNSUPPORTED_OUT}"
+    echo
+
+    if [ "${RESPONSE_FORMAT_UNSUPPORTED_CODE_VALUE}" != "400" ]; then
+      echo "ERROR: expected response_format=json_object to return HTTP 400, got ${RESPONSE_FORMAT_UNSUPPORTED_CODE_VALUE}" >&2
+      exit 1
+    fi
+
+    if ! grep -q "response_format_not_supported" "${RESPONSE_FORMAT_UNSUPPORTED_OUT}"; then
+      echo "ERROR: response_format=json_object response does not contain response_format_not_supported" >&2
+      exit 1
+    fi
+
+    echo "response_format parameter check OK"
+  else
+    echo "=== 4f. response_format parameter compatibility skipped ==="
   fi
 else
   echo "=== 4. single chat completion skipped ==="
