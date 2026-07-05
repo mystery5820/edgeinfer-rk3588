@@ -507,7 +507,7 @@ usage
 其中需要注意：
 
 ```text
-usage 当前字段存在，但 token 计数暂为 null。
+usage 当前字段存在，并返回 estimated integer usage；该数值不是 tokenizer 精确结果，估算方法见 `docs/phase12_estimated_usage.md`。
 temperature 当前字段存在并校验范围，但尚未下传控制 RKLLM 采样。
 finish_reason 当前统一为 stop，尚未区分 length / content_filter / tool_calls 等情况。
 ```

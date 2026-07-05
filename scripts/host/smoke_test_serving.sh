@@ -94,6 +94,55 @@ print(data.get("edgeinfer", {}).get("backend", ""))
 }
 
 
+assert_usage_estimated() {
+  local json_file="$1"
+  local label="$2"
+
+  python3 - "${json_file}" "${label}" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+json_file = Path(sys.argv[1])
+label = sys.argv[2]
+data = json.loads(json_file.read_text(encoding="utf-8"))
+
+usage = data.get("usage")
+if not isinstance(usage, dict):
+    print(f"ERROR: {label} usage is missing or invalid: {usage!r}", file=sys.stderr)
+    sys.exit(1)
+
+values = {}
+for key in ("prompt_tokens", "completion_tokens", "total_tokens"):
+    value = usage.get(key)
+    if not isinstance(value, int) or value < 0:
+        print(f"ERROR: {label} usage.{key} must be a non-negative integer, got {value!r}", file=sys.stderr)
+        sys.exit(1)
+    values[key] = value
+
+if values["total_tokens"] != values["prompt_tokens"] + values["completion_tokens"]:
+    print(f"ERROR: {label} usage total mismatch: {usage!r}", file=sys.stderr)
+    sys.exit(1)
+
+usage_info = data.get("edgeinfer", {}).get("usage")
+if not isinstance(usage_info, dict):
+    print(f"ERROR: {label} edgeinfer.usage is missing or invalid: {usage_info!r}", file=sys.stderr)
+    sys.exit(1)
+
+if usage_info.get("estimated") is not True:
+    print(f"ERROR: {label} edgeinfer.usage.estimated must be true: {usage_info!r}", file=sys.stderr)
+    sys.exit(1)
+
+method = usage_info.get("method")
+if not isinstance(method, str) or not method:
+    print(f"ERROR: {label} edgeinfer.usage.method is missing: {usage_info!r}", file=sys.stderr)
+    sys.exit(1)
+
+print(f"usage check OK: {label}: {usage}")
+PY
+}
+
+
 infer_expected_backend_mode() {
   if [ -n "${EXPECT_BACKEND_MODE}" ]; then
     echo "${EXPECT_BACKEND_MODE}"
@@ -250,6 +299,7 @@ content_parts = []
 saw_role = False
 saw_finish = False
 seen_backend = ""
+final_payload = None
 
 for event in events:
     if event == "[DONE]":
@@ -286,6 +336,7 @@ for event in events:
 
     if choice.get("finish_reason") == "stop":
         saw_finish = True
+        final_payload = payload
 
 text = "".join(content_parts)
 
@@ -306,6 +357,32 @@ if not saw_finish:
 
 if not text:
     print("ERROR: SSE response did not include any content delta", file=sys.stderr)
+    sys.exit(1)
+
+if final_payload is None:
+    print("ERROR: SSE response did not include a final payload", file=sys.stderr)
+    sys.exit(1)
+
+usage = final_payload.get("usage")
+if not isinstance(usage, dict):
+    print(f"ERROR: SSE final chunk usage is missing or invalid: {usage!r}", file=sys.stderr)
+    sys.exit(1)
+
+values = {}
+for key in ("prompt_tokens", "completion_tokens", "total_tokens"):
+    value = usage.get(key)
+    if not isinstance(value, int) or value < 0:
+        print(f"ERROR: SSE usage.{key} must be a non-negative integer, got {value!r}", file=sys.stderr)
+        sys.exit(1)
+    values[key] = value
+
+if values["total_tokens"] != values["prompt_tokens"] + values["completion_tokens"]:
+    print(f"ERROR: SSE usage total mismatch: {usage!r}", file=sys.stderr)
+    sys.exit(1)
+
+usage_info = final_payload.get("edgeinfer", {}).get("usage")
+if not isinstance(usage_info, dict) or usage_info.get("estimated") is not True:
+    print(f"ERROR: SSE edgeinfer.usage is missing or not estimated: {usage_info!r}", file=sys.stderr)
     sys.exit(1)
 
 if text.lstrip().startswith("LLM:") or "LLM:" in text[:16]:
@@ -344,6 +421,7 @@ JSON
 
   curl_json POST "${BOARD_URL}/v1/chat/completions" "${CHAT_REQ}"
   assert_backend "${TMP_DIR}/response.json" "${EXPECT_BACKEND}" "single chat"
+  assert_usage_estimated "${TMP_DIR}/response.json" "single chat"
 
   if [ "${RUN_MAX_TOKENS_COMPAT}" = "1" ]; then
     echo "=== 4b. max_tokens compatibility ==="
@@ -369,6 +447,7 @@ JSON
 
     curl_json POST "${BOARD_URL}/v1/chat/completions" "${MAX_TOKENS_REQ}"
     assert_backend "${TMP_DIR}/response.json" "${EXPECT_BACKEND}" "max_tokens compatibility"
+    assert_usage_estimated "${TMP_DIR}/response.json" "max_tokens compatibility"
 
     cat > "${MAX_TOKENS_CONFLICT_REQ}" <<JSON
 {

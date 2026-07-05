@@ -398,7 +398,7 @@ Phase 10 当前仍有以下限制：
 1. `stream=true` 只在 persistent worker 模式支持；
 2. one-shot 模式仍拒绝 `stream=true`；
 3. 当前是 chunk 级增量输出，不承诺严格 token 级切分；
-4. `usage.prompt_tokens`、`usage.completion_tokens`、`usage.total_tokens` 仍为 `null`；
+4. `usage.prompt_tokens`、`usage.completion_tokens`、`usage.total_tokens` 已返回 estimated integer usage，估算方法见 `docs/phase12_estimated_usage.md`；
 5. `temperature` 尚未真正下传到 RKLLM runtime；
 6. `top_p` 仍只接受 `1.0`；
 7. `response_format` 仍只接受 `{"type":"text"}`，不支持 JSON mode；

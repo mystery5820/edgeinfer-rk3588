@@ -140,6 +140,43 @@ def assert_backend_present(body: Dict[str, Any]) -> None:
         raise AssertionError("response edgeinfer.backend is missing")
 
 
+def assert_estimated_usage(body: Dict[str, Any], label: str) -> None:
+    usage = body.get("usage")
+    if not isinstance(usage, dict):
+        raise AssertionError(f"{label} usage is missing or invalid: {usage!r}")
+
+    prompt_tokens = usage.get("prompt_tokens")
+    completion_tokens = usage.get("completion_tokens")
+    total_tokens = usage.get("total_tokens")
+
+    for key, value in (
+        ("prompt_tokens", prompt_tokens),
+        ("completion_tokens", completion_tokens),
+        ("total_tokens", total_tokens),
+    ):
+        if not isinstance(value, int) or value < 0:
+            raise AssertionError(f"{label} usage.{key} must be a non-negative integer, got {value!r}")
+
+    if total_tokens != prompt_tokens + completion_tokens:
+        raise AssertionError(
+            f"{label} usage.total_tokens mismatch: "
+            f"{total_tokens!r} != {prompt_tokens!r} + {completion_tokens!r}"
+        )
+
+    usage_info = body.get("edgeinfer", {}).get("usage")
+    if not isinstance(usage_info, dict):
+        raise AssertionError(f"{label} edgeinfer.usage is missing or invalid: {usage_info!r}")
+
+    if usage_info.get("estimated") is not True:
+        raise AssertionError(f"{label} edgeinfer.usage.estimated must be true: {usage_info!r}")
+
+    method = usage_info.get("method")
+    if not isinstance(method, str) or not method:
+        raise AssertionError(f"{label} edgeinfer.usage.method is missing: {usage_info!r}")
+
+    print(f"{label} usage check OK: {json.dumps(usage, ensure_ascii=False)}")
+
+
 def test_health() -> None:
     print("=== 1. health ===")
     _, body = request_json("GET", "/v1/health", expected_status=200)
@@ -169,6 +206,7 @@ def test_max_tokens_chat() -> None:
 
     _, body = request_json("POST", "/v1/chat/completions", payload, expected_status=200)
     assert_backend_present(body)
+    assert_estimated_usage(body, "max_tokens chat")
     print_chat_summary("max_tokens chat", body)
 
 
@@ -194,6 +232,7 @@ def test_stop_sequences() -> None:
     _, body = request_json("POST", "/v1/chat/completions", payload, expected_status=200)
     assert_backend_present(body)
     content = get_assistant_content(body)
+    assert_estimated_usage(body, "stop sequences chat")
 
     leaked = [seq for seq in stop_sequences if seq in content]
     if leaked:
@@ -240,6 +279,7 @@ def assert_stream_success(raw: str) -> str:
     content_parts: List[str] = []
     saw_role = False
     saw_finish = False
+    final_payload: Optional[Dict[str, Any]] = None
 
     for event in events:
         if event == "[DONE]":
@@ -269,6 +309,7 @@ def assert_stream_success(raw: str) -> str:
 
         if choice.get("finish_reason") == "stop":
             saw_finish = True
+            final_payload = payload
 
     text = "".join(content_parts)
 
@@ -280,6 +321,11 @@ def assert_stream_success(raw: str) -> str:
 
     if not text:
         raise AssertionError("SSE response did not include any content delta")
+
+    if final_payload is None:
+        raise AssertionError("SSE response did not include a final payload")
+
+    assert_estimated_usage(final_payload, "stream final chunk")
 
     if text.lstrip().startswith("LLM:") or "LLM:" in text[:16]:
         raise AssertionError(f"SSE content leaked worker prefix: {text!r}")

@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 import time
 import uuid
 from typing import AsyncIterator, Dict, List, Literal, Optional, Union
@@ -22,6 +23,8 @@ from server.scheduler.request_queue import (
 router = APIRouter(prefix="/v1", tags=["chat"])
 
 LLM_TIMEOUT_SECONDS = float(os.environ.get("EDGEINFER_LLM_TIMEOUT_SECONDS", "90"))
+
+USAGE_ESTIMATION_METHOD = "simple_mixed_text_heuristic_v1"
 
 
 class ChatMessage(BaseModel):
@@ -118,6 +121,52 @@ def _effective_max_new_tokens(req: ChatCompletionRequest) -> int:
         return int(req.max_tokens)
 
     return int(req.max_new_tokens)
+
+
+def _is_cjk_char(ch: str) -> bool:
+    codepoint = ord(ch)
+    return (
+        0x3400 <= codepoint <= 0x4DBF
+        or 0x4E00 <= codepoint <= 0x9FFF
+        or 0xF900 <= codepoint <= 0xFAFF
+        or 0x20000 <= codepoint <= 0x2A6DF
+        or 0x2A700 <= codepoint <= 0x2B73F
+        or 0x2B740 <= codepoint <= 0x2B81F
+        or 0x2B820 <= codepoint <= 0x2CEAF
+    )
+
+
+def _estimate_token_count(text: str) -> int:
+    """Return a stable, explicitly estimated token count.
+
+    This is not a model tokenizer. It is a lightweight mixed CJK/ASCII
+    heuristic used until RKLLM runtime exposes reliable token usage.
+    """
+
+    if not text or not text.strip():
+        return 0
+
+    cjk_count = sum(1 for ch in text if _is_cjk_char(ch))
+    non_cjk_text = "".join(" " if _is_cjk_char(ch) else ch for ch in text)
+    ascii_like_tokens = re.findall(r"[A-Za-z0-9_]+|[^\sA-Za-z0-9_]", non_cjk_text)
+    return max(1, cjk_count + len(ascii_like_tokens))
+
+
+def _build_estimated_usage(prompt: str, completion: str) -> Dict[str, int]:
+    prompt_tokens = _estimate_token_count(prompt)
+    completion_tokens = _estimate_token_count(completion)
+    return {
+        "prompt_tokens": prompt_tokens,
+        "completion_tokens": completion_tokens,
+        "total_tokens": prompt_tokens + completion_tokens,
+    }
+
+
+def _usage_estimation_info() -> Dict[str, object]:
+    return {
+        "estimated": True,
+        "method": USAGE_ESTIMATION_METHOD,
+    }
 
 
 def _normalize_stop_sequences(req: ChatCompletionRequest) -> List[str]:
@@ -226,6 +275,7 @@ def _stream_chunk(
     delta: Dict[str, object],
     finish_reason: Optional[str] = None,
     edgeinfer: Optional[Dict[str, object]] = None,
+    usage: Optional[Dict[str, int]] = None,
 ) -> Dict[str, object]:
     payload: Dict[str, object] = {
         "id": chunk_id,
@@ -243,6 +293,8 @@ def _stream_chunk(
 
     if edgeinfer is not None:
         payload["edgeinfer"] = edgeinfer
+    if usage is not None:
+        payload["usage"] = usage
 
     return payload
 
@@ -293,6 +345,7 @@ async def _stream_chat_events(
     created = int(time.time())
     matched_stop: Optional[str] = None
     pending_stop = ""
+    completion_parts: List[str] = []
     stream_stopped = False
     success = False
 
@@ -331,6 +384,7 @@ async def _stream_chat_events(
                 stream_stopped = True
 
             if delta:
+                completion_parts.append(delta)
                 yield _json_sse(
                     _stream_chunk(
                         chunk_id=chunk_id,
@@ -342,6 +396,7 @@ async def _stream_chat_events(
                 )
 
         if not stream_stopped and pending_stop:
+            completion_parts.append(pending_stop)
             yield _json_sse(
                 _stream_chunk(
                     chunk_id=chunk_id,
@@ -352,6 +407,8 @@ async def _stream_chat_events(
                 )
             )
 
+        usage = _build_estimated_usage(prompt, "".join(completion_parts))
+
         yield _json_sse(
             _stream_chunk(
                 chunk_id=chunk_id,
@@ -359,6 +416,7 @@ async def _stream_chat_events(
                 model_id=model_id,
                 delta={},
                 finish_reason="stop",
+                usage=usage,
                 edgeinfer={
                     "backend": _configured_rkllm_backend_name(),
                     "stream": True,
@@ -366,6 +424,7 @@ async def _stream_chat_events(
                         "requested": stop_sequences,
                         "matched": matched_stop,
                     },
+                    "usage": _usage_estimation_info(),
                 },
             )
         )
@@ -551,6 +610,7 @@ async def chat_completions(req: ChatCompletionRequest):
         )
 
     response_text, matched_stop = _apply_stop_sequences(result["text"], stop_sequences)
+    usage = _build_estimated_usage(prompt, response_text)
     created = int(time.time())
 
     return {
@@ -568,11 +628,7 @@ async def chat_completions(req: ChatCompletionRequest):
                 "finish_reason": "stop",
             }
         ],
-        "usage": {
-            "prompt_tokens": None,
-            "completion_tokens": None,
-            "total_tokens": None,
-        },
+        "usage": usage,
         "edgeinfer": {
             "backend": result.get("backend"),
             "latency_ms": result.get("latency_ms"),
@@ -585,5 +641,6 @@ async def chat_completions(req: ChatCompletionRequest):
                 "requested": stop_sequences,
                 "matched": matched_stop,
             },
+            "usage": _usage_estimation_info(),
         },
     }
