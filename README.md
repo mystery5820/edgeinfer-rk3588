@@ -267,6 +267,7 @@ docs/README.md
 - Phase 13B 项目阶段总结：`docs/phase13b_project_summary.md`
 - Phase 14 Benchmark 与性能展示总表：`docs/phase14_benchmark_summary.md`
 - Phase 14B controlled LLM Serving Benchmark：`docs/phase14b_controlled_benchmark.md`
+- Phase 14C Benchmark run 2026-07-05 摘要：`docs/phase14c_benchmark_run_20260705.md`
 
 ---
 
