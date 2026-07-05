@@ -1,69 +1,315 @@
 # EdgeInfer-RK3588
 
-基于 RK3588 NPU 的端侧多模型推理服务框架。
+基于 RK3588 NPU 的端侧多模型推理服务框架，面向端侧 AI Infra、模型部署优化、RKNN / RKLLM 推理服务化和工程化部署实践。
 
-## 项目定位
+当前项目已经完成从视觉模型验证到端侧 LLM Serving 的主线闭环：YOLOv11 RKNN 板端验证、Qwen3-4B RKLLM 板端推理、OpenAI-like Chat Completions API、persistent worker 流式输出、busy rejection、metrics、systemd 部署和 host 侧自动化验收。
 
-本项目面向端侧 AI Infra、模型部署优化与推理系统方向，基于 RK3588 NPU 构建一个支持视觉检测、端侧 LLM、视觉语言模型、多模型调度、自动化 Benchmark 和工程化部署的小型推理服务框架。
+---
 
-## 当前目标
+## 1. 项目定位
 
-- YOLOv11 实时视觉检测
-- Qwen2.5 / Qwen3 系列端侧 LLM 推理
-- VLM 图文问答扩展
-- RKNN / RKLLM 多后端统一封装
-- 模型包管理
-- OpenAI-like API
-- 自动化 Benchmark
-- 多模型调度与资源监控
-- systemd 工程化部署
+本项目不是单一模型 Demo，而是一个围绕 RK3588 构建的小型端侧推理服务框架，目标包括：
 
-## 目录说明
+- 统一管理视觉检测、端侧 LLM、后续 VLM 等多类型模型；
+- 统一封装 RKNN / RKLLM 多后端推理能力；
+- 提供 OpenAI-like HTTP API，方便上层应用接入；
+- 提供 host -> board 自动化部署、验证和回归脚本；
+- 提供 metrics、busy rejection、worker mode 等服务稳定性能力；
+- 沉淀完整阶段文档，便于复盘和继续扩展。
 
-- datasets：数据集
-- models/vision：视觉模型
-- models/llm：大语言模型
-- models/vlm：视觉语言模型
-- experiments：历史实验与优化实验
-- server：推理服务框架代码
-- cpp：C++ 推理与后处理代码
-- tools：转换、量化、Benchmark 工具
-- third_party：RKNN / RKLLM 官方工具包
-- results：Benchmark 与日志结果
-- envs：Python 环境依赖记录
+---
 
-## Phase 9 Serving 运维与验证
+## 2. 当前能力概览
 
-Phase 9 Serving Framework 已提供 host 侧部署与验收脚本：
+| 方向 | 当前状态 |
+| --- | --- |
+| YOLOv11 RKNN | 已完成板端验证与压缩路线取舍 |
+| Qwen2.5 RKLLM | 已完成 0.5B / 1.5B 板端验证与对比 |
+| Qwen3-4B RKLLM | 已完成 all-NPU / hybrid 板端验证，当前推荐 all-NPU |
+| Serving API | 已实现 FastAPI 服务框架 |
+| OpenAI-like Chat API | 已支持 `/v1/chat/completions` 基础兼容 |
+| `max_tokens` | 已兼容 OpenAI 风格参数，并映射到 `max_new_tokens` |
+| `stop` | 已支持 stop sequences |
+| `stream=true` | persistent worker 模式已支持 SSE；one-shot 模式显式拒绝 |
+| OpenAI Python SDK | 已提供 `base_url` 示例 |
+| `usage` | 已返回 estimated usage，并明确标注估算方法 |
+| `finish_reason=length` | 已完成语义调研，当前暂不实现不可靠的 length 判断 |
+| 并发控制 | 单 LLM backend busy 时立即返回 429 |
+| Metrics | 已暴露 LLM queue、backend、latency、busy、request counters |
+| systemd 部署 | 已支持板端服务化部署 |
+| 自动化验证 | 已支持 one-shot / worker 双模式验收 |
+
+---
+
+## 3. 架构概览
+
+```text
+Host Ubuntu
+├── scripts/host/
+│   ├── deploy_serving_to_board.sh
+│   ├── smoke_test_serving.sh
+│   ├── validate_serving_modes.sh
+│   ├── test_openai_chat_client.py
+│   └── check_openai_sdk_examples.py
+│
+└── rsync / ssh
+    ↓
+
+RK3588 Board
+├── systemd: edgeinfer-serving.service
+├── FastAPI server
+│   ├── /v1/health
+│   ├── /v1/models
+│   ├── /v1/metrics
+│   └── /v1/chat/completions
+│
+├── server/runtime/
+│   ├── rkllm_backend.py
+│   ├── rkllm_runner.py
+│   └── rkllm_worker_backend.py
+│
+├── RKLLM one-shot runner
+└── RKLLM persistent worker
+    └── stream=true SSE
+```
+
+---
+
+## 4. 推荐模型
+
+当前 LLM 主推模型：
+
+```text
+qwen3-4b-rkllm-all-npu
+```
+
+模型状态在：
+
+```text
+configs/model_registry.yaml
+```
+
+推荐原因：
+
+- 已完成 RK3588 板端验证；
+- all-NPU 路线性能和工程稳定性更适合当前 Serving 主线；
+- 已被 `/v1/chat/completions`、worker mode、streaming、SDK examples 覆盖验证。
+
+---
+
+## 5. 快速开始
+
+### 5.1 Host 侧进入仓库
 
 ```bash
-./scripts/host/deploy_serving_to_board.sh
-./scripts/host/smoke_test_serving.sh
-./scripts/host/validate_serving_modes.sh
+cd ~/edgeinfer-rk3588
 ```
+
+### 5.2 静态检查
+
+```bash
+python3 -m compileall -q server scripts/host tools
+
+bash -n scripts/host/deploy_serving_to_board.sh
+bash -n scripts/host/smoke_test_serving.sh
+bash -n scripts/host/validate_serving_modes.sh
+
+git diff --check
+```
+
+### 5.3 部署到 RK3588 板端并验收
 
 推荐完整验收命令：
 
 ```bash
-./scripts/host/validate_serving_modes.sh
+EDGEINFER_VALIDATE_DEPLOY=1 ./scripts/host/validate_serving_modes.sh
 ```
 
-该命令会自动验证默认 one-shot 模式与可选 RKLLM persistent worker 模式，并在结束后恢复默认 one-shot。
+该命令会自动完成：
 
-详细说明见：
+1. host 侧语法检查；
+2. 同步 Serving 代码到板端；
+3. 板端 compileall；
+4. 重启 `edgeinfer-serving.service`；
+5. 验证默认 one-shot 模式；
+6. 启用并验证 persistent worker 模式；
+7. 验证 `stream=true` SSE；
+8. 验证 busy rejection、metrics、OpenAI-like 参数兼容；
+9. 最后恢复默认 one-shot 模式。
+
+---
+
+## 6. 板端服务
+
+默认服务名：
 
 ```text
-docs/phase9_serving_operations.md
+edgeinfer-serving.service
 ```
 
-OpenAI-like Chat API 兼容说明见：
+常用检查：
+
+```bash
+ssh linaro@192.168.43.7 "systemctl status edgeinfer-serving.service --no-pager"
+ssh linaro@192.168.43.7 "curl -s http://127.0.0.1:8000/v1/health | python3 -m json.tool"
+```
+
+默认 host 侧访问地址：
 
 ```text
-docs/phase9_openai_compat.md
+http://192.168.43.7:8000
 ```
 
+---
 
-- Phase 10 stream=true SSE 流式输出说明：`docs/phase10_streaming_sse.md`
-- Phase 11 OpenAI Python SDK 示例说明：`docs/phase11_openai_sdk_examples.md`
-- Phase 12A estimated usage token 统计说明：`docs/phase12_estimated_usage.md`
+## 7. API 示例
+
+### 7.1 Health
+
+```bash
+curl -s http://192.168.43.7:8000/v1/health | python3 -m json.tool
+```
+
+### 7.2 Models
+
+```bash
+curl -s http://192.168.43.7:8000/v1/models | python3 -m json.tool
+```
+
+### 7.3 Metrics
+
+```bash
+curl -s http://192.168.43.7:8000/v1/metrics | python3 -m json.tool
+```
+
+### 7.4 Chat Completions
+
+```bash
+curl -s http://192.168.43.7:8000/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "qwen3-4b-rkllm-all-npu",
+    "messages": [
+      {
+        "role": "user",
+        "content": "请用一句话介绍 RK3588。"
+      }
+    ],
+    "max_tokens": 64
+  }' | python3 -m json.tool
+```
+
+---
+
+## 8. OpenAI Python SDK 示例
+
+安装依赖：
+
+```bash
+python3 -m pip install openai
+```
+
+普通非流式示例：
+
+```bash
+python3 examples/openai_sdk_chat_completion.py
+```
+
+worker stream 示例：
+
+```bash
+ssh linaro@192.168.43.7 \
+  "cd /home/linaro/edgeinfer-rk3588-board && ./scripts/board/enable_edgeinfer_worker_mode.sh"
+
+EDGEINFER_EXPECT_STREAM=1 \
+python3 scripts/host/check_openai_sdk_examples.py
+
+ssh linaro@192.168.43.7 \
+  "cd /home/linaro/edgeinfer-rk3588-board && ./scripts/board/disable_edgeinfer_worker_mode.sh"
+```
+
+---
+
+## 9. 目录说明
+
+| 路径 | 说明 |
+| --- | --- |
+| `server/` | FastAPI Serving 与 RKLLM runtime 封装 |
+| `scripts/host/` | Host 侧部署、验收、OpenAI-like client 测试 |
+| `scripts/board/` | RK3588 板端服务安装、worker mode 切换和探测脚本 |
+| `tools/` | 模型资产检查、Benchmark、YOLO 工具 |
+| `configs/` | 模型注册表与配置 |
+| `docs/` | 阶段文档与验证记录 |
+| `examples/` | OpenAI Python SDK 示例 |
+| `envs/` | Python 环境依赖记录 |
+| `models/` | 模型目录占位与本地模型组织 |
+| `results/` | Benchmark 与验证结果输出 |
+
+---
+
+## 10. 文档导航
+
+推荐从这里开始：
+
+```text
+docs/README.md
+```
+
+关键文档：
+
+- Phase 9 Serving 运维与验证：`docs/phase9_serving_operations.md`
+- Phase 9 OpenAI-like API：`docs/phase9_openai_compat.md`
+- Phase 10 stream=true SSE：`docs/phase10_streaming_sse.md`
+- Phase 11 OpenAI Python SDK 示例：`docs/phase11_openai_sdk_examples.md`
+- Phase 12A estimated usage：`docs/phase12_estimated_usage.md`
 - Phase 12B finish_reason=length 语义调研：`docs/phase12b_finish_reason_length_research.md`
+
+---
+
+## 11. 当前限制
+
+当前项目仍有一些有意保留的限制：
+
+1. `usage` 是 estimated usage，不是 tokenizer 精确统计；
+2. `finish_reason=length` 暂未实现，因为 RKLLM runtime / worker 未暴露可靠 stop reason；
+3. `stream=true` 仅 persistent worker 模式支持；
+4. one-shot 模式下 `stream=true` 会返回 `stream_backend_not_supported`；
+5. `n > 1` 暂不支持；
+6. `top_p != 1.0` 暂不支持；
+7. `response_format={"type":"json_object"}` 暂不支持；
+8. `temperature` 当前主要作为 API 兼容字段，尚未完整下传到底层 runtime；
+9. 暂不支持 tool calls / function calling；
+10. VLM 仍是后续扩展方向。
+
+---
+
+## 12. 已完成阶段标签
+
+| Tag | 说明 |
+| --- | --- |
+| `phase9-openai-compat-mvp` | OpenAI-like Chat API MVP |
+| `phase10-worker-streaming-mvp` | worker stream=true SSE MVP |
+| `phase11-openai-sdk-examples` | OpenAI Python SDK 示例 |
+| `phase12a-estimated-usage` | estimated usage token 统计 |
+| `phase12b-finish-reason-research` | finish_reason=length 语义调研 |
+
+---
+
+## 13. 项目当前状态
+
+当前主线已经完成：
+
+```text
+端侧 LLM Serving MVP
+OpenAI-like Chat API
+Worker SSE streaming
+Estimated usage
+Host/Board 自动化部署与验收
+工程化文档沉淀
+```
+
+下一步建议进入：
+
+```text
+Phase 13：项目工程化整理与对外展示
+```
