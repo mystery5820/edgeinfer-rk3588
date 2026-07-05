@@ -402,7 +402,7 @@ Phase 10 当前仍有以下限制：
 5. `temperature` 尚未真正下传到 RKLLM runtime；
 6. `top_p` 仍只接受 `1.0`；
 7. `response_format` 仍只接受 `{"type":"text"}`，不支持 JSON mode；
-8. `finish_reason` 当前主要返回 `stop`，尚未细分 `length`；
+8. `finish_reason` 当前主要返回 `stop`，尚未细分 `length`；Phase 12B 已记录暂不实现 length 的原因，见 `docs/phase12b_finish_reason_length_research.md`；
 9. worker 后端仍保持单并发，busy 时返回 429；
 10. 尚未提供 OpenAI SDK 官方客户端示例。
 

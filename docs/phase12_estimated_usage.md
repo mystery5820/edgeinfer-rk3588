@@ -46,7 +46,7 @@ data: [DONE]
 2. 在 edgeinfer.usage 中明确标注 estimated=true；
 3. method 字段说明当前是启发式估算；
 4. 文档明确该数值不可用于精确计费或严格 token quota；
-5. finish_reason=length 暂不强行实现。
+5. finish_reason=length 暂不强行实现，原因见 `docs/phase12b_finish_reason_length_research.md`。
 ```
 
 ---
@@ -155,7 +155,7 @@ Phase 12A 收口后，可以继续推进：
 
 ```text
 1. 接入真实 tokenizer 或 RKLLM runtime token 统计；
-2. 实现 finish_reason=length；
+2. 在 RKLLM runtime / worker 暴露可靠 stop reason 后实现 finish_reason=length；
 3. 增加 stream_options.include_usage 风格开关；
 4. 增加 usage 估算误差说明；
 5. 在 OpenAI SDK 示例中展示 usage 读取方式。
