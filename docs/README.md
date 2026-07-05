@@ -112,5 +112,6 @@ EDGEINFER_VALIDATE_DEPLOY=1 \
 ## Phase 13B 项目总结
 
 | `phase14_benchmark_summary.md` | Benchmark 与性能展示总表 |
+| `phase14b_controlled_benchmark.md` | Controlled LLM Serving Benchmark 脚本与执行说明 |
 
 | `phase13b_project_summary.md` | 项目阶段总结、交接、简历描述与后续路线图 |
