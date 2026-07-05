@@ -265,6 +265,7 @@ docs/README.md
 - Phase 12B finish_reason=length 语义调研：`docs/phase12b_finish_reason_length_research.md`
 - Phase 13 项目工程化整理与对外展示：`docs/phase13_project_showcase.md`
 - Phase 13B 项目阶段总结：`docs/phase13b_project_summary.md`
+- Phase 14 Benchmark 与性能展示总表：`docs/phase14_benchmark_summary.md`
 
 ---
 
