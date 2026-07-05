@@ -108,3 +108,7 @@ host/board automated validation
 EDGEINFER_VALIDATE_DEPLOY=1 \
 ./scripts/host/validate_serving_modes.sh
 ```
+
+## Phase 13B 项目总结
+
+| `phase13b_project_summary.md` | 项目阶段总结、交接、简历描述与后续路线图 |
