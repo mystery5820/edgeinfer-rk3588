@@ -309,6 +309,7 @@ docs/README.md
 - Phase 16D Streaming vs Non-streaming Performance Summary：`docs/phase16d_streaming_vs_nonstreaming_summary.md`
 - Phase 17A README Benchmark Snapshot：`docs/phase17a_readme_benchmark_snapshot.md`
 - Phase 17B v0.1.0 Release Notes / Final Milestone Summary：`docs/phase17b_v0_1_0_release_notes.md`
+- Phase 17C v0.1.0 Final Checklist：`docs/phase17c_v0_1_0_final_checklist.md`
 
 ---
 
