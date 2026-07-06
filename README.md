@@ -308,6 +308,7 @@ docs/README.md
 - Phase 16C Warm Worker Streaming Benchmark Run 2026-07-06：`docs/phase16c_warm_streaming_benchmark_run_20260706.md`
 - Phase 16D Streaming vs Non-streaming Performance Summary：`docs/phase16d_streaming_vs_nonstreaming_summary.md`
 - Phase 17A README Benchmark Snapshot：`docs/phase17a_readme_benchmark_snapshot.md`
+- Phase 17B v0.1.0 Release Notes / Final Milestone Summary：`docs/phase17b_v0_1_0_release_notes.md`
 
 ---
 

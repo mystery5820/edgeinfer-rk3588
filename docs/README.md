@@ -124,5 +124,6 @@ EDGEINFER_VALIDATE_DEPLOY=1 \
 | `phase16c_warm_streaming_benchmark_run_20260706.md` | 2026-07-06 warm worker streaming benchmark repeat=3 结果摘要 |
 | `phase16d_streaming_vs_nonstreaming_summary.md` | 非流式与流式 benchmark 横向对比、README 展示建议 |
 | `phase17a_readme_benchmark_snapshot.md` | README 首页 benchmark snapshot 展示口径与数据来源 |
+| `phase17b_v0_1_0_release_notes.md` | v0.1.0 release notes 草案、最终里程碑总结与后续路线 |
 
 | `phase13b_project_summary.md` | 项目阶段总结、交接、简历描述与后续路线图 |
