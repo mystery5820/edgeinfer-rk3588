@@ -97,15 +97,45 @@ configs/model_registry.yaml
 
 ---
 
-## 5. 快速开始
+## 5. Benchmark Snapshot
 
-### 5.1 Host 侧进入仓库
+Current sample results for `qwen3-4b-rkllm-all-npu` on one RK3588 board:
+
+| Scenario | Metric | Sample result | Notes |
+| --- | --- | ---: | --- |
+| Non-streaming one-shot | client latency | ~21.3-21.7 s | repeat=1, `max_tokens=48` |
+| Non-streaming warm worker | client latency | ~13.5 s | worker already started |
+| Streaming warm worker | first content latency | ~4.52-5.23 s | repeat=3, `max_tokens=64` |
+| Streaming warm worker | success | 6/6 OK | `finish_reason=stop`, `data: [DONE]` received |
+
+Key interpretation:
+
+```text
+Streaming does not make total generation time disappear.
+Its main benefit is that the client can see the first assistant content much earlier.
+```
+
+Detailed benchmark notes:
+
+```text
+docs/phase14c_benchmark_run_20260705.md
+docs/phase16c_warm_streaming_benchmark_run_20260706.md
+docs/phase16d_streaming_vs_nonstreaming_summary.md
+```
+
+Benchmark values are sample measurements on one RK3588 board and may vary with prompt, `max_tokens`, runtime state and board load.
+
+---
+
+## 6. 快速开始
+
+### 6.1 Host 侧进入仓库
 
 ```bash
 cd ~/edgeinfer-rk3588
 ```
 
-### 5.2 静态检查
+### 6.2 静态检查
 
 ```bash
 python3 -m compileall -q server scripts/host tools
@@ -117,7 +147,7 @@ bash -n scripts/host/validate_serving_modes.sh
 git diff --check
 ```
 
-### 5.3 部署到 RK3588 板端并验收
+### 6.3 部署到 RK3588 板端并验收
 
 推荐完整验收命令：
 
@@ -139,7 +169,7 @@ EDGEINFER_VALIDATE_DEPLOY=1 ./scripts/host/validate_serving_modes.sh
 
 ---
 
-## 6. 板端服务
+## 7. 板端服务
 
 默认服务名：
 
@@ -162,27 +192,27 @@ http://192.168.43.7:8000
 
 ---
 
-## 7. API 示例
+## 8. API 示例
 
-### 7.1 Health
+### 8.1 Health
 
 ```bash
 curl -s http://192.168.43.7:8000/v1/health | python3 -m json.tool
 ```
 
-### 7.2 Models
+### 8.2 Models
 
 ```bash
 curl -s http://192.168.43.7:8000/v1/models | python3 -m json.tool
 ```
 
-### 7.3 Metrics
+### 8.3 Metrics
 
 ```bash
 curl -s http://192.168.43.7:8000/v1/metrics | python3 -m json.tool
 ```
 
-### 7.4 Chat Completions
+### 8.4 Chat Completions
 
 ```bash
 curl -s http://192.168.43.7:8000/v1/chat/completions \
@@ -201,7 +231,7 @@ curl -s http://192.168.43.7:8000/v1/chat/completions \
 
 ---
 
-## 8. OpenAI Python SDK 示例
+## 9. OpenAI Python SDK 示例
 
 安装依赖：
 
@@ -230,7 +260,7 @@ ssh linaro@192.168.43.7 \
 
 ---
 
-## 9. 目录说明
+## 10. 目录说明
 
 | 路径 | 说明 |
 | --- | --- |
@@ -247,7 +277,7 @@ ssh linaro@192.168.43.7 \
 
 ---
 
-## 10. 文档导航
+## 11. 文档导航
 
 推荐从这里开始：
 
@@ -277,10 +307,11 @@ docs/README.md
 - Phase 16B Streaming Benchmark Run 2026-07-06：`docs/phase16b_streaming_benchmark_run_20260706.md`
 - Phase 16C Warm Worker Streaming Benchmark Run 2026-07-06：`docs/phase16c_warm_streaming_benchmark_run_20260706.md`
 - Phase 16D Streaming vs Non-streaming Performance Summary：`docs/phase16d_streaming_vs_nonstreaming_summary.md`
+- Phase 17A README Benchmark Snapshot：`docs/phase17a_readme_benchmark_snapshot.md`
 
 ---
 
-## 11. 当前限制
+## 12. 当前限制
 
 当前项目仍有一些有意保留的限制：
 
@@ -297,7 +328,7 @@ docs/README.md
 
 ---
 
-## 12. 已完成阶段标签
+## 13. 已完成阶段标签
 
 | Tag | 说明 |
 | --- | --- |
@@ -309,7 +340,7 @@ docs/README.md
 
 ---
 
-## 13. 项目当前状态
+## 14. 项目当前状态
 
 当前主线已经完成：
 
