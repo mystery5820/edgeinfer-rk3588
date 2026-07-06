@@ -11,6 +11,7 @@ from pydantic import BaseModel, Field
 from server.model_manager.registry import ModelRegistry
 from server.runtime.fake_vision_backend import FakeVisionBackend
 from server.runtime.rknn_yolo_backend import (
+    RKNNYoloDetectProbeBackend,
     RKNNYoloDryBackend,
     RKNNYoloInferenceProbeBackend,
     RKNNYoloProbeError,
@@ -33,6 +34,8 @@ def _vision_backend_mode() -> str:
 
 def _vision_backend_name() -> str:
     mode = _vision_backend_mode()
+    if mode in {"rknn-detect", "rknn-yolo-detect", "rknn-yolo-detect-probe", "rknn-yolo-postprocess"}:
+        return "rknn-yolo-detect-probe"
     if mode in {"rknn-inference", "rknn-yolo-inference", "rknn-yolo-inference-probe", "rknn-yolo-probe"}:
         return "rknn-yolo-inference-probe"
     if mode in {"rknn", "rknn-yolo", "rknn-dryrun", "rknn-yolo-dryrun"}:
@@ -42,6 +45,8 @@ def _vision_backend_name() -> str:
 
 def _vision_runtime_name() -> str:
     backend_name = _vision_backend_name()
+    if backend_name == "rknn-yolo-detect-probe":
+        return "phase18f-yolo-postprocess-integration"
     if backend_name == "rknn-yolo-inference-probe":
         return "phase18e-rknn-yolo-inference-probe"
     if backend_name == "rknn-yolo-dryrun":
@@ -51,6 +56,8 @@ def _vision_runtime_name() -> str:
 
 def _vision_metrics_snapshot() -> Dict[str, object]:
     backend_name = _vision_backend_name()
+    if backend_name == "rknn-yolo-detect-probe":
+        return RKNNYoloDetectProbeBackend.metrics_snapshot()
     if backend_name == "rknn-yolo-inference-probe":
         return RKNNYoloInferenceProbeBackend.metrics_snapshot()
     if backend_name == "rknn-yolo-dryrun":
@@ -131,6 +138,14 @@ def _run_backend(
     iou_threshold: float,
 ) -> Dict[str, object]:
     backend_name = _vision_backend_name()
+    if backend_name == "rknn-yolo-detect-probe":
+        return RKNNYoloDetectProbeBackend.detect(
+            model=model,
+            image_path=image_path,
+            confidence_threshold=confidence_threshold,
+            iou_threshold=iou_threshold,
+        )
+
     if backend_name == "rknn-yolo-inference-probe":
         return RKNNYoloInferenceProbeBackend.detect(
             model=model,
@@ -237,7 +252,7 @@ def vision_detect(req: VisionDetectRequest):
                 "iou": req.iou_threshold,
             },
             "model_runtime": result.get("model_runtime"),
-            "note": "Phase 18E can run one real RKNNLite inference and return output metadata. YOLO decode/NMS will be integrated later.",
+            "note": "Phase 18F can run RKNNLite inference and YOLO postprocess to return detection objects. This remains an opt-in probe backend.",
             "vision": _vision_metrics_snapshot(),
         },
     }

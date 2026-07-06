@@ -315,6 +315,7 @@ docs/README.md
 - Phase 18C Vision Image Input / Preprocess Skeleton：`docs/phase18c_vision_image_input_skeleton.md`
 - Phase 18D RKNN YOLO Backend Dry Integration：`docs/phase18d_rknn_yolo_backend_dryrun.md`
 - Phase 18E RKNN YOLO Inference Probe：`docs/phase18e_rknn_yolo_inference_probe.md`
+- Phase 18F YOLO Postprocess Integration：`docs/phase18f_yolo_postprocess_integration.md`
 
 ---
 
