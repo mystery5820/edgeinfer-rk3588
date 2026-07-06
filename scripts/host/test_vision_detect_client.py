@@ -12,6 +12,10 @@ from typing import Any, Dict, Optional
 
 BOARD_URL = os.environ.get("EDGEINFER_BOARD_URL", "http://192.168.43.7:8000").rstrip("/")
 TIMEOUT_SECONDS = float(os.environ.get("EDGEINFER_TIMEOUT_SECONDS", "30"))
+VISION_TEST_IMAGE_PATH = os.environ.get(
+    "EDGEINFER_VISION_TEST_IMAGE_PATH",
+    "/home/linaro/edgeinfer-rk3588-board/datasets/coco128/images/train2017/000000000089.jpg",
+)
 
 
 def url(path: str) -> str:
@@ -73,7 +77,7 @@ def assert_error_code(body: Dict[str, Any], expected_code: str) -> None:
 
 
 def assert_latency(latency: Dict[str, Any]) -> None:
-    required = ["preprocess", "inference", "postprocess", "total"]
+    required = ["load_image", "preprocess", "inference", "postprocess", "total"]
     for key in required:
         if key not in latency:
             raise AssertionError(f"missing latency_ms.{key}: {latency!r}")
@@ -82,48 +86,68 @@ def assert_latency(latency: Dict[str, Any]) -> None:
             raise AssertionError(f"latency_ms.{key} must be non-negative number, got {value!r}")
 
 
+def assert_image(image: Dict[str, Any]) -> None:
+    required = ["path", "format", "width", "height", "channels", "size_bytes", "preprocess"]
+    for key in required:
+        if key not in image:
+            raise AssertionError(f"missing image.{key}: {image!r}")
+    if image["path"] != VISION_TEST_IMAGE_PATH:
+        raise AssertionError(f"unexpected image path: {image['path']!r}")
+    for key in ["width", "height", "channels", "size_bytes"]:
+        value = image[key]
+        if not isinstance(value, int) or value <= 0:
+            raise AssertionError(f"image.{key} must be positive int, got {value!r}")
+    preprocess = image["preprocess"]
+    if not isinstance(preprocess, dict):
+        raise AssertionError(f"image.preprocess must be object: {image!r}")
+    for key in ["method", "target_width", "target_height", "scale"]:
+        if key not in preprocess:
+            raise AssertionError(f"missing image.preprocess.{key}: {preprocess!r}")
+
+
+def assert_success_response(data: Dict[str, Any], model_id: Optional[str] = None) -> None:
+    if data.get("object") != "vision.detection":
+        raise AssertionError(f"unexpected object: {data.get('object')!r}")
+    if model_id is not None and data.get("model") != model_id:
+        raise AssertionError(f"unexpected model: {data.get('model')!r}, expected {model_id!r}")
+    if not isinstance(data.get("objects"), list):
+        raise AssertionError(f"objects must be a list: {data!r}")
+    assert_latency(data.get("latency_ms") or {})
+    assert_image(data.get("image") or {})
+
+    edgeinfer = data.get("edgeinfer") or {}
+    if edgeinfer.get("backend") != "fake-vision":
+        raise AssertionError(f"expected fake-vision backend, got {edgeinfer!r}")
+    if edgeinfer.get("runtime") != "phase18c-image-input-skeleton":
+        raise AssertionError(f"expected phase18c-image-input-skeleton runtime, got {edgeinfer!r}")
+
+
 def test_vision_detect_success() -> str:
-    print("=== 1. vision detect skeleton success ===")
+    print("=== 1. vision detect image metadata success ===")
     model_id = find_model("object-detection")
     payload = {
         "model": model_id,
-        "image_path": "/tmp/edgeinfer_phase18b_fake_input.jpg",
+        "image_path": VISION_TEST_IMAGE_PATH,
         "confidence_threshold": 0.25,
         "iou_threshold": 0.45,
     }
     data = request_json("POST", "/v1/vision/detect", payload)
     print(json.dumps(data, ensure_ascii=False, indent=2))
-
-    if data.get("object") != "vision.detection":
-        raise AssertionError(f"unexpected object: {data.get('object')!r}")
-    if data.get("model") != model_id:
-        raise AssertionError(f"unexpected model: {data.get('model')!r}, expected {model_id!r}")
-    if not isinstance(data.get("objects"), list):
-        raise AssertionError(f"objects must be a list: {data!r}")
-    assert_latency(data.get("latency_ms") or {})
-
-    edgeinfer = data.get("edgeinfer") or {}
-    if edgeinfer.get("backend") != "fake-vision":
-        raise AssertionError(f"expected fake-vision backend, got {edgeinfer!r}")
-    if edgeinfer.get("runtime") != "phase18b-skeleton":
-        raise AssertionError(f"expected phase18b-skeleton runtime, got {edgeinfer!r}")
-
-    print("vision detect skeleton success check OK")
+    assert_success_response(data, model_id=model_id)
+    print("vision detect image metadata success check OK")
     return model_id
 
 
 def test_default_model_success() -> None:
     print("=== 2. vision detect default model success ===")
     payload = {
-        "image_path": "/tmp/edgeinfer_phase18b_fake_input.jpg",
+        "image_path": VISION_TEST_IMAGE_PATH,
     }
     data = request_json("POST", "/v1/vision/detect", payload)
     print(json.dumps(data, ensure_ascii=False, indent=2))
-    if data.get("object") != "vision.detection":
-        raise AssertionError(f"unexpected object: {data.get('object')!r}")
+    assert_success_response(data)
     if not data.get("model"):
         raise AssertionError(f"default vision model was not resolved: {data!r}")
-    assert_latency(data.get("latency_ms") or {})
     print("vision default model success check OK")
 
 
@@ -135,7 +159,7 @@ def test_model_not_vision() -> None:
         "/v1/vision/detect",
         {
             "model": llm_model,
-            "image_path": "/tmp/edgeinfer_phase18b_fake_input.jpg",
+            "image_path": VISION_TEST_IMAGE_PATH,
         },
         expected_status=400,
     )
@@ -158,11 +182,27 @@ def test_invalid_image_path(model_id: str) -> None:
     print("invalid_image_path rejection check OK")
 
 
+def test_image_not_found(model_id: str) -> None:
+    print("=== 5. image_not_found rejection ===")
+    body = request_expect_error(
+        "POST",
+        "/v1/vision/detect",
+        {
+            "model": model_id,
+            "image_path": "/tmp/edgeinfer_phase18c_missing_input_000000.jpg",
+        },
+        expected_status=404,
+    )
+    assert_error_code(body, "image_not_found")
+    print("image_not_found rejection check OK")
+
+
 def main() -> int:
     started = time.time()
-    print("=== EdgeInfer Vision Detect Skeleton Client Test ===")
+    print("=== EdgeInfer Vision Detect Image Metadata Client Test ===")
     print(f"BOARD_URL={BOARD_URL}")
     print(f"TIMEOUT_SECONDS={TIMEOUT_SECONDS}")
+    print(f"VISION_TEST_IMAGE_PATH={VISION_TEST_IMAGE_PATH}")
     print()
 
     model_id = test_vision_detect_success()
@@ -173,9 +213,11 @@ def main() -> int:
     print()
     test_invalid_image_path(model_id)
     print()
+    test_image_not_found(model_id)
+    print()
 
     elapsed = time.time() - started
-    print(f"=== Vision detect skeleton client test passed in {elapsed:.3f}s ===")
+    print(f"=== Vision detect image metadata client test passed in {elapsed:.3f}s ===")
     return 0
 
 

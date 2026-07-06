@@ -2,13 +2,14 @@ from __future__ import annotations
 
 import time
 import uuid
-from typing import Dict, List, Optional
+from typing import Dict, Optional
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 from server.model_manager.registry import ModelRegistry
 from server.runtime.fake_vision_backend import FakeVisionBackend
+from server.vision.image_probe import ImageProbeError
 
 router = APIRouter(prefix="/v1", tags=["vision"])
 
@@ -94,21 +95,44 @@ def vision_detect(req: VisionDetectRequest):
             status_code=400,
             detail=_vision_error_detail(
                 code="invalid_image_path",
-                message="image_path must be a non-empty string in Phase 18B skeleton",
+                message="image_path must be a non-empty string",
                 model_id=str(model.get("id")),
                 retryable=False,
             ),
         )
 
+    image_path = req.image_path.strip()
     started = time.time()
-    result = FakeVisionBackend.detect(
-        model=model,
-        image_path=req.image_path.strip(),
-        confidence_threshold=req.confidence_threshold,
-        iou_threshold=req.iou_threshold,
-    )
-    total_ms = (time.time() - started) * 1000.0
 
+    try:
+        result = FakeVisionBackend.detect(
+            model=model,
+            image_path=image_path,
+            confidence_threshold=req.confidence_threshold,
+            iou_threshold=req.iou_threshold,
+        )
+    except FileNotFoundError as exc:
+        raise HTTPException(
+            status_code=404,
+            detail=_vision_error_detail(
+                code="image_not_found",
+                message=str(exc),
+                model_id=str(model.get("id")),
+                retryable=False,
+            ),
+        ) from exc
+    except ImageProbeError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail=_vision_error_detail(
+                code="invalid_image_file",
+                message=str(exc),
+                model_id=str(model.get("id")),
+                retryable=False,
+            ),
+        ) from exc
+
+    total_ms = (time.time() - started) * 1000.0
     latency_ms = dict(result["latency_ms"])
     latency_ms["total"] = round(total_ms, 3)
 
@@ -117,17 +141,18 @@ def vision_detect(req: VisionDetectRequest):
         "object": "vision.detection",
         "created": int(time.time()),
         "model": model.get("id"),
+        "image": result["image"],
         "objects": result["objects"],
         "latency_ms": latency_ms,
         "edgeinfer": {
             "backend": "fake-vision",
-            "runtime": "phase18b-skeleton",
-            "image_path": req.image_path.strip(),
+            "runtime": "phase18c-image-input-skeleton",
+            "image_path": image_path,
             "thresholds": {
                 "confidence": req.confidence_threshold,
                 "iou": req.iou_threshold,
             },
-            "note": "Phase 18B API skeleton. Real RKNN YOLO backend will be integrated in later phases.",
+            "note": "Phase 18C validates image_path and probes image metadata. Real RKNN YOLO backend will be integrated later.",
             "vision": FakeVisionBackend.metrics_snapshot(),
         },
     }
