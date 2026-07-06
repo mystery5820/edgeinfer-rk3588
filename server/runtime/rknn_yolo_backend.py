@@ -110,13 +110,20 @@ class _RKNNYoloBase:
 
         method = "letterbox-metadata-only"
         note = "No pixel resize is performed in Phase 18D dry integration."
+        coordinate_transform = "metadata_only"
 
         if phase == "18e":
             method = "resize-nhwc-uint8-subprocess"
             note = "Phase 18E subprocess performs cv2 resize and NHWC uint8 tensor construction."
+            coordinate_transform = "resize_stretch"
         elif phase == "18f":
             method = "resize-nhwc-uint8-subprocess-postprocess"
             note = "Phase 18F subprocess performs cv2 resize, RKNN inference and YOLO postprocess."
+            coordinate_transform = "resize_stretch_input_space"
+        elif phase == "18g":
+            method = "resize-nhwc-uint8-subprocess-postprocess-scale-back"
+            note = "Phase 18G returns bbox in original image coordinates and keeps bbox_input for model-input coordinates."
+            coordinate_transform = "resize_stretch_scale_back_to_original"
 
         return {
             "method": method,
@@ -132,6 +139,8 @@ class _RKNNYoloBase:
             "input_tensor_layout": "NHWC",
             "input_tensor_shape": [1, target_height, target_width, int(image.get("channels", 3))],
             "input_tensor_dtype": "uint8",
+            "coordinate_transform": coordinate_transform,
+            "coordinate_space": "original_image" if phase == "18g" else "model_input",
             "note": note,
         }
 
@@ -212,6 +221,7 @@ class _RKNNYoloBase:
             "num_outputs": probe.get("num_outputs"),
             "num_detections": probe.get("num_detections"),
             "output_shapes": probe.get("output_shapes"),
+            "coordinate_space": probe.get("coordinate_space"),
             "subprocess_elapsed_ms": probe.get("subprocess", {}).get("elapsed_ms"),
         }
 
@@ -226,18 +236,22 @@ class _RKNNYoloBase:
     def _normalize_objects(detections: List[Dict[str, object]]) -> List[Dict[str, object]]:
         objects: List[Dict[str, object]] = []
         for det in detections or []:
-            box = det.get("box") or det.get("bbox") or []
+            bbox = det.get("bbox") or det.get("box") or []
+            bbox_input = det.get("bbox_input") or det.get("box") or bbox
             score = det.get("score", det.get("confidence", 0.0))
             cls_id = det.get("class_id", det.get("label_id", -1))
             cls_name = det.get("class_name", str(cls_id))
+            coordinate_space = det.get("coordinate_space", "original_image" if det.get("bbox_input") else "model_input")
 
             objects.append(
                 {
                     "class_id": int(cls_id),
                     "class_name": str(cls_name),
                     "confidence": float(score),
-                    "bbox": [float(x) for x in box],
+                    "bbox": [float(x) for x in bbox],
+                    "bbox_input": [float(x) for x in bbox_input],
                     "box_format": "xyxy",
+                    "coordinate_space": str(coordinate_space),
                 }
             )
         return objects
@@ -445,12 +459,7 @@ class RKNNYoloInferenceProbeBackend(_RKNNYoloBase):
 
 
 class RKNNYoloDetectProbeBackend(_RKNNYoloBase):
-    """RKNN YOLO detect probe backend.
-
-    This backend runs real RKNNLite inference and applies the existing
-    postprocess_yolo_outputs implementation inside a subprocess. It returns
-    stable API objects but still remains an opt-in probe backend.
-    """
+    """RKNN YOLO detect probe backend."""
 
     @staticmethod
     def _probe_script() -> Path:
@@ -517,7 +526,7 @@ class RKNNYoloDetectProbeBackend(_RKNNYoloBase):
 
             preprocess_started = time.time()
             target_width, target_height = cls._target_size(model)
-            preprocess = cls._build_preprocess_plan(image, target_width, target_height, phase="18f")
+            preprocess = cls._build_preprocess_plan(image, target_width, target_height, phase="18g")
             preprocess_ms = (time.time() - preprocess_started) * 1000.0
 
             probe = cls._run_probe(
@@ -554,6 +563,8 @@ class RKNNYoloDetectProbeBackend(_RKNNYoloBase):
                         "output_shapes": probe.get("output_shapes"),
                         "output_dtypes": probe.get("output_dtypes"),
                         "num_detections": probe.get("num_detections"),
+                        "coordinate_space": probe.get("coordinate_space"),
+                        "bbox_input_coordinate_space": probe.get("bbox_input_coordinate_space"),
                     },
                 },
                 "latency_ms": {

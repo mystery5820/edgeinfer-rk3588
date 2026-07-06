@@ -6,11 +6,13 @@ import json
 import sys
 import time
 from pathlib import Path
+from typing import Dict, List
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT_ROOT))
 
+from server.vision.coco_classes import coco_class_name
 from server.vision.yolo_postprocess import postprocess_yolo_outputs
 
 
@@ -31,6 +33,47 @@ def summarize_outputs(outputs):
         dtypes.append(str(arr.dtype))
 
     return shapes, dtypes
+
+
+def clip(value: float, lo: float, hi: float) -> float:
+    return max(lo, min(hi, value))
+
+
+def refine_detection(
+    det: Dict[str, object],
+    *,
+    original_width: int,
+    original_height: int,
+    input_width: int,
+    input_height: int,
+) -> Dict[str, object]:
+    """Map direct-resize model-input bbox back to original image coordinates."""
+
+    box_input = [float(x) for x in (det.get("box") or det.get("bbox") or [0.0, 0.0, 0.0, 0.0])]
+    if len(box_input) != 4:
+        box_input = [0.0, 0.0, 0.0, 0.0]
+
+    scale_x = float(original_width) / max(float(input_width), 1.0)
+    scale_y = float(original_height) / max(float(input_height), 1.0)
+
+    x1 = clip(box_input[0] * scale_x, 0.0, float(original_width))
+    y1 = clip(box_input[1] * scale_y, 0.0, float(original_height))
+    x2 = clip(box_input[2] * scale_x, 0.0, float(original_width))
+    y2 = clip(box_input[3] * scale_y, 0.0, float(original_height))
+
+    cls_id = int(det.get("class_id", -1))
+    score = float(det.get("score", det.get("confidence", 0.0)))
+
+    return {
+        "bbox": [x1, y1, x2, y2],
+        "bbox_input": box_input,
+        "score": score,
+        "class_id": cls_id,
+        "class_name": coco_class_name(cls_id),
+        "box_format": "xyxy",
+        "coordinate_space": "original_image",
+        "bbox_input_coordinate_space": "model_input_640x640",
+    }
 
 
 def main() -> int:
@@ -141,6 +184,9 @@ def main() -> int:
             )
 
         original_shape = [int(x) for x in img.shape]
+        original_height = int(img.shape[0])
+        original_width = int(img.shape[1])
+
         img = cv2.resize(img, (args.input_width, args.input_height), interpolation=cv2.INTER_LINEAR)
         img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
         img = img.astype(np.uint8)
@@ -154,17 +200,24 @@ def main() -> int:
         output_shapes, output_dtypes = summarize_outputs(outputs)
 
         postprocess_started = time.time()
-        detections = postprocess_yolo_outputs(
+        raw_detections = postprocess_yolo_outputs(
             outputs=outputs,
             conf_thres=args.conf_thres,
             iou_thres=args.iou_thres,
             box_format="xywh",
             input_size=(args.input_width, args.input_height),
         )
+        detections = [
+            refine_detection(
+                det,
+                original_width=original_width,
+                original_height=original_height,
+                input_width=args.input_width,
+                input_height=args.input_height,
+            )
+            for det in raw_detections[:100]
+        ]
         postprocess_ms = (time.time() - postprocess_started) * 1000.0
-
-        # Keep the probe payload bounded. API can return these as objects.
-        detections = detections[:100]
 
         release_started = time.time()
         rknn.release()
@@ -182,9 +235,14 @@ def main() -> int:
                 "model_size_mb": round(model_path.stat().st_size / 1024 / 1024, 3),
                 "image_path": str(image_path),
                 "original_image_shape": original_shape,
+                "original_image_width": original_width,
+                "original_image_height": original_height,
                 "input_tensor_shape": [int(x) for x in input_tensor.shape],
                 "input_tensor_dtype": str(input_tensor.dtype),
                 "input_tensor_layout": "NHWC",
+                "coordinate_space": "original_image",
+                "bbox_input_coordinate_space": "model_input_640x640",
+                "coordinate_transform": "direct_resize_scale_back",
                 "import_ms": round(import_ms, 3),
                 "create_ms": round(create_ms, 3),
                 "load_rknn_ms": round(load_ms, 3),

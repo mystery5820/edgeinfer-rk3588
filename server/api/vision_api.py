@@ -46,7 +46,7 @@ def _vision_backend_name() -> str:
 def _vision_runtime_name() -> str:
     backend_name = _vision_backend_name()
     if backend_name == "rknn-yolo-detect-probe":
-        return "phase18f-yolo-postprocess-integration"
+        return "phase18g-vision-detect-output-refinement"
     if backend_name == "rknn-yolo-inference-probe":
         return "phase18e-rknn-yolo-inference-probe"
     if backend_name == "rknn-yolo-dryrun":
@@ -252,7 +252,7 @@ def vision_detect(req: VisionDetectRequest):
                 "iou": req.iou_threshold,
             },
             "model_runtime": result.get("model_runtime"),
-            "note": "Phase 18F can run RKNNLite inference and YOLO postprocess to return detection objects. This remains an opt-in probe backend.",
+            "note": "Phase 18G refines vision detect outputs with COCO class names and original-image bbox coordinates.",
             "vision": _vision_metrics_snapshot(),
         },
     }

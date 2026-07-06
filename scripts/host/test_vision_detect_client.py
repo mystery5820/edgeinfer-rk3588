@@ -22,7 +22,7 @@ VISION_TEST_MODEL = os.environ.get("EDGEINFER_VISION_TEST_MODEL", "").strip()
 
 def expected_runtime() -> str:
     if EXPECTED_BACKEND == "rknn-yolo-detect-probe":
-        return "phase18f-yolo-postprocess-integration"
+        return "phase18g-vision-detect-output-refinement"
     if EXPECTED_BACKEND == "rknn-yolo-inference-probe":
         return "phase18e-rknn-yolo-inference-probe"
     if EXPECTED_BACKEND == "rknn-yolo-dryrun":
@@ -34,7 +34,6 @@ def default_test_model() -> str:
     if VISION_TEST_MODEL:
         return VISION_TEST_MODEL
     if EXPECTED_BACKEND == "rknn-yolo-detect-probe":
-        # The FP model is currently the validated model for real detections.
         return "YOLOv11n-FP-Baseline"
     return ""
 
@@ -121,7 +120,7 @@ def assert_latency(latency: Dict[str, Any]) -> None:
     if EXPECTED_BACKEND in {"rknn-yolo-inference-probe", "rknn-yolo-detect-probe"} and latency["inference"] <= 0:
         raise AssertionError(f"inference latency should be > 0: {latency!r}")
     if EXPECTED_BACKEND == "rknn-yolo-detect-probe" and latency["postprocess"] <= 0:
-        raise AssertionError(f"postprocess latency should be > 0 in Phase 18F: {latency!r}")
+        raise AssertionError(f"postprocess latency should be > 0 in detect probe: {latency!r}")
 
 
 def assert_image(image: Dict[str, Any]) -> None:
@@ -143,11 +142,16 @@ def assert_image(image: Dict[str, Any]) -> None:
             raise AssertionError(f"missing image.preprocess.{key}: {preprocess!r}")
 
 
-def assert_objects(objects: Any, require_non_empty: bool) -> None:
+def assert_objects(objects: Any, image: Dict[str, Any], require_non_empty: bool) -> None:
     if not isinstance(objects, list):
         raise AssertionError(f"objects must be a list: {objects!r}")
     if require_non_empty and not objects:
-        raise AssertionError("expected non-empty objects for Phase 18F FP detect probe")
+        raise AssertionError("expected non-empty objects for Phase 18G FP detect probe")
+
+    width = float(image.get("width", 0) or 0)
+    height = float(image.get("height", 0) or 0)
+    target_width = float((image.get("preprocess") or {}).get("target_width", 640))
+    target_height = float((image.get("preprocess") or {}).get("target_height", 640))
 
     for obj in objects:
         if not isinstance(obj, dict):
@@ -155,10 +159,27 @@ def assert_objects(objects: Any, require_non_empty: bool) -> None:
         for key in ["class_id", "class_name", "confidence", "bbox"]:
             if key not in obj:
                 raise AssertionError(f"missing object.{key}: {obj!r}")
+
         if not isinstance(obj["bbox"], list) or len(obj["bbox"]) != 4:
             raise AssertionError(f"object.bbox must be 4-number list: {obj!r}")
+        x1, y1, x2, y2 = [float(x) for x in obj["bbox"]]
+        if not (0 <= x1 <= width and 0 <= x2 <= width and 0 <= y1 <= height and 0 <= y2 <= height):
+            raise AssertionError(f"object.bbox must be original-image coordinates: {obj!r}, image={image!r}")
+
         if not isinstance(obj["confidence"], (int, float)) or obj["confidence"] < 0:
             raise AssertionError(f"invalid object confidence: {obj!r}")
+
+        if EXPECTED_BACKEND == "rknn-yolo-detect-probe":
+            if obj.get("coordinate_space") != "original_image":
+                raise AssertionError(f"expected original_image coordinate_space: {obj!r}")
+            if str(obj.get("class_name")) == str(obj.get("class_id")):
+                raise AssertionError(f"class_name should be COCO label, not numeric string: {obj!r}")
+            bbox_input = obj.get("bbox_input")
+            if not isinstance(bbox_input, list) or len(bbox_input) != 4:
+                raise AssertionError(f"expected bbox_input: {obj!r}")
+            ix1, iy1, ix2, iy2 = [float(x) for x in bbox_input]
+            if not (0 <= ix1 <= target_width and 0 <= ix2 <= target_width and 0 <= iy1 <= target_height and 0 <= iy2 <= target_height):
+                raise AssertionError(f"bbox_input must be model-input coordinates: {obj!r}")
 
 
 def assert_success_response(data: Dict[str, Any], model_id: Optional[str] = None, require_objects: bool = False) -> None:
@@ -167,9 +188,10 @@ def assert_success_response(data: Dict[str, Any], model_id: Optional[str] = None
     if model_id is not None and data.get("model") != model_id:
         raise AssertionError(f"unexpected model: {data.get('model')!r}, expected {model_id!r}")
 
+    image = data.get("image") or {}
     assert_latency(data.get("latency_ms") or {})
-    assert_image(data.get("image") or {})
-    assert_objects(data.get("objects"), require_non_empty=require_objects)
+    assert_image(image)
+    assert_objects(data.get("objects"), image=image, require_non_empty=require_objects)
 
     edgeinfer = data.get("edgeinfer") or {}
     if edgeinfer.get("backend") != EXPECTED_BACKEND:
@@ -198,9 +220,12 @@ def assert_success_response(data: Dict[str, Any], model_id: Optional[str] = None
                 raise AssertionError(f"expected non-empty output_shapes: {output_summary!r}")
 
         if EXPECTED_BACKEND == "rknn-yolo-detect-probe":
-            num_detections = model_runtime.get("output_summary", {}).get("num_detections")
+            output_summary = model_runtime.get("output_summary", {})
+            num_detections = output_summary.get("num_detections")
             if require_objects and (not isinstance(num_detections, int) or num_detections <= 0):
                 raise AssertionError(f"expected num_detections > 0: {model_runtime!r}")
+            if output_summary.get("coordinate_space") != "original_image":
+                raise AssertionError(f"expected output coordinate_space original_image: {output_summary!r}")
 
 
 def test_vision_detect_success() -> str:
@@ -227,7 +252,6 @@ def test_default_model_success() -> None:
     }
     data = request_json("POST", "/v1/vision/detect", payload)
     print(json.dumps(data, ensure_ascii=False, indent=2))
-    # Default model can still be INT8, whose current detection count is known to be zero.
     assert_success_response(data, require_objects=False)
     if not data.get("model"):
         raise AssertionError(f"default vision model was not resolved: {data!r}")
