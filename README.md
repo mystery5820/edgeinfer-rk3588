@@ -276,6 +276,7 @@ docs/README.md
 - Phase 16A Streaming Benchmark / First Content Latency：`docs/phase16a_streaming_benchmark.md`
 - Phase 16B Streaming Benchmark Run 2026-07-06：`docs/phase16b_streaming_benchmark_run_20260706.md`
 - Phase 16C Warm Worker Streaming Benchmark Run 2026-07-06：`docs/phase16c_warm_streaming_benchmark_run_20260706.md`
+- Phase 16D Streaming vs Non-streaming Performance Summary：`docs/phase16d_streaming_vs_nonstreaming_summary.md`
 
 ---
 

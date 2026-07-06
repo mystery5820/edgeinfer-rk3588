@@ -122,5 +122,6 @@ EDGEINFER_VALIDATE_DEPLOY=1 \
 | `phase16a_streaming_benchmark.md` | Streaming SSE benchmark 工具、首 content 延迟指标与执行说明 |
 | `phase16b_streaming_benchmark_run_20260706.md` | 2026-07-06 streaming benchmark 实测结果摘要 |
 | `phase16c_warm_streaming_benchmark_run_20260706.md` | 2026-07-06 warm worker streaming benchmark repeat=3 结果摘要 |
+| `phase16d_streaming_vs_nonstreaming_summary.md` | 非流式与流式 benchmark 横向对比、README 展示建议 |
 
 | `phase13b_project_summary.md` | 项目阶段总结、交接、简历描述与后续路线图 |
