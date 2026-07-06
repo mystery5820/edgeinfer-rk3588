@@ -133,5 +133,6 @@ EDGEINFER_VALIDATE_DEPLOY=1 \
 | `phase18e_rknn_yolo_inference_probe.md` | RKNN YOLO inference probe、NHWC batch tensor、output_shapes 与 inference_ms |
 | `phase18f_yolo_postprocess_integration.md` | RKNN YOLO detect probe、postprocess_yolo_outputs 与真实 objects 输出 |
 | `phase18g_vision_detect_output_refinement.md` | COCO class names、original-image bbox、bbox_input 与 coordinate_space 输出精修 |
+| `phase18h_vision_worker_stabilization.md` | persistent RKNN YOLO worker、rknn-yolo-worker backend 与重复初始化开销消除 |
 
 | `phase13b_project_summary.md` | 项目阶段总结、交接、简历描述与后续路线图 |

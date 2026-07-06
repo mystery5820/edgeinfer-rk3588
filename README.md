@@ -317,6 +317,7 @@ docs/README.md
 - Phase 18E RKNN YOLO Inference Probe：`docs/phase18e_rknn_yolo_inference_probe.md`
 - Phase 18F YOLO Postprocess Integration：`docs/phase18f_yolo_postprocess_integration.md`
 - Phase 18G Vision Detect Output Refinement：`docs/phase18g_vision_detect_output_refinement.md`
+- Phase 18H Vision Worker Stabilization：`docs/phase18h_vision_worker_stabilization.md`
 
 ---
 

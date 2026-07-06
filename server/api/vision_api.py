@@ -14,6 +14,7 @@ from server.runtime.rknn_yolo_backend import (
     RKNNYoloDetectProbeBackend,
     RKNNYoloDryBackend,
     RKNNYoloInferenceProbeBackend,
+    RKNNYoloWorkerBackend,
     RKNNYoloProbeError,
 )
 from server.vision.image_probe import ImageProbeError
@@ -34,6 +35,8 @@ def _vision_backend_mode() -> str:
 
 def _vision_backend_name() -> str:
     mode = _vision_backend_mode()
+    if mode in {"rknn-worker", "rknn-yolo-worker", "vision-worker", "rknn-yolo-persistent"}:
+        return "rknn-yolo-worker"
     if mode in {"rknn-detect", "rknn-yolo-detect", "rknn-yolo-detect-probe", "rknn-yolo-postprocess"}:
         return "rknn-yolo-detect-probe"
     if mode in {"rknn-inference", "rknn-yolo-inference", "rknn-yolo-inference-probe", "rknn-yolo-probe"}:
@@ -45,6 +48,8 @@ def _vision_backend_name() -> str:
 
 def _vision_runtime_name() -> str:
     backend_name = _vision_backend_name()
+    if backend_name == "rknn-yolo-worker":
+        return "phase18h-vision-worker-stabilization"
     if backend_name == "rknn-yolo-detect-probe":
         return "phase18g-vision-detect-output-refinement"
     if backend_name == "rknn-yolo-inference-probe":
@@ -56,6 +61,8 @@ def _vision_runtime_name() -> str:
 
 def _vision_metrics_snapshot() -> Dict[str, object]:
     backend_name = _vision_backend_name()
+    if backend_name == "rknn-yolo-worker":
+        return RKNNYoloWorkerBackend.metrics_snapshot()
     if backend_name == "rknn-yolo-detect-probe":
         return RKNNYoloDetectProbeBackend.metrics_snapshot()
     if backend_name == "rknn-yolo-inference-probe":
@@ -138,6 +145,14 @@ def _run_backend(
     iou_threshold: float,
 ) -> Dict[str, object]:
     backend_name = _vision_backend_name()
+    if backend_name == "rknn-yolo-worker":
+        return RKNNYoloWorkerBackend.detect(
+            model=model,
+            image_path=image_path,
+            confidence_threshold=confidence_threshold,
+            iou_threshold=iou_threshold,
+        )
+
     if backend_name == "rknn-yolo-detect-probe":
         return RKNNYoloDetectProbeBackend.detect(
             model=model,
@@ -252,7 +267,7 @@ def vision_detect(req: VisionDetectRequest):
                 "iou": req.iou_threshold,
             },
             "model_runtime": result.get("model_runtime"),
-            "note": "Phase 18G refines vision detect outputs with COCO class names and original-image bbox coordinates.",
+            "note": "Phase 18H adds a persistent RKNN YOLO worker while preserving Phase 18G refined detection outputs.",
             "vision": _vision_metrics_snapshot(),
         },
     }

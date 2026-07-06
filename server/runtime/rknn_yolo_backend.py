@@ -3,11 +3,13 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import threading
 import time
 from pathlib import Path
 from typing import Dict, List, Tuple
 
 from server.model_manager.config import default_registry_path, load_yaml
+from server.runtime.rknn_yolo_worker_backend import RKNNYoloWorkerClient
 from server.vision.image_probe import probe_image
 
 
@@ -124,6 +126,10 @@ class _RKNNYoloBase:
             method = "resize-nhwc-uint8-subprocess-postprocess-scale-back"
             note = "Phase 18G returns bbox in original image coordinates and keeps bbox_input for model-input coordinates."
             coordinate_transform = "resize_stretch_scale_back_to_original"
+        elif phase == "18h":
+            method = "resize-nhwc-uint8-worker-postprocess-scale-back"
+            note = "Phase 18H uses a persistent RKNN YOLO worker and returns original-image bbox coordinates."
+            coordinate_transform = "resize_stretch_scale_back_to_original"
 
         return {
             "method": method,
@@ -140,7 +146,7 @@ class _RKNNYoloBase:
             "input_tensor_shape": [1, target_height, target_width, int(image.get("channels", 3))],
             "input_tensor_dtype": "uint8",
             "coordinate_transform": coordinate_transform,
-            "coordinate_space": "original_image" if phase == "18g" else "model_input",
+            "coordinate_space": "original_image" if phase in {"18g", "18h"} else "model_input",
             "note": note,
         }
 
@@ -222,6 +228,9 @@ class _RKNNYoloBase:
             "num_detections": probe.get("num_detections"),
             "output_shapes": probe.get("output_shapes"),
             "coordinate_space": probe.get("coordinate_space"),
+            "worker_reused": probe.get("worker_reused"),
+            "worker_startup_ms": probe.get("worker_startup_ms"),
+            "worker_request_latency_ms": probe.get("worker_request_latency_ms"),
             "subprocess_elapsed_ms": probe.get("subprocess", {}).get("elapsed_ms"),
         }
 
@@ -571,6 +580,162 @@ class RKNNYoloDetectProbeBackend(_RKNNYoloBase):
                     "load_image": round(load_image_ms, 3),
                     "preprocess": round(preprocess_ms, 3),
                     "backend_init": probe.get("backend_init_ms", 0.0),
+                    "inference": probe.get("inference_ms", 0.0),
+                    "postprocess": probe.get("postprocess_ms", 0.0),
+                },
+            }
+        except Exception as exc:
+            cls._fail_request(exc)
+            raise
+
+
+class RKNNYoloWorkerBackend(_RKNNYoloBase):
+    """Persistent RKNN YOLO worker backend."""
+
+    _worker: RKNNYoloWorkerClient | None = None
+    _worker_key: tuple[str, str, str, int, int] | None = None
+    _worker_guard = threading.Lock()
+
+    @staticmethod
+    def _worker_script() -> Path:
+        return PROJECT_ROOT / "scripts" / "board" / "rknn_yolo_worker.py"
+
+    @classmethod
+    def _get_worker(
+        cls,
+        *,
+        python_bin: str,
+        worker_script: str,
+        model_path: str,
+        target_width: int,
+        target_height: int,
+        startup_timeout: float,
+        request_timeout: float,
+    ) -> RKNNYoloWorkerClient:
+        key = (python_bin, worker_script, model_path, int(target_width), int(target_height))
+
+        with cls._worker_guard:
+            if cls._worker is not None and cls._worker_key == key:
+                return cls._worker
+
+            if cls._worker is not None:
+                cls._worker.stop()
+
+            cls._worker = RKNNYoloWorkerClient(
+                python_bin=python_bin,
+                worker_script=worker_script,
+                model_path=model_path,
+                input_width=target_width,
+                input_height=target_height,
+                startup_timeout=startup_timeout,
+                request_timeout=request_timeout,
+            )
+            cls._worker_key = key
+            return cls._worker
+
+    @classmethod
+    def worker_runtime_snapshot(cls) -> Dict[str, object]:
+        with cls._worker_guard:
+            if cls._worker is None:
+                return {
+                    "started": False,
+                    "pid": None,
+                    "model_path": None,
+                    "startup_ms": None,
+                    "request_count": 0,
+                    "failed_request_count": 0,
+                    "restart_count": 0,
+                    "last_latency_ms": None,
+                    "last_error": None,
+                }
+            return cls._worker.snapshot()
+
+    @classmethod
+    def metrics_snapshot(cls) -> Dict[str, object]:
+        snapshot = super().metrics_snapshot()
+        snapshot["worker"] = cls.worker_runtime_snapshot()
+        return snapshot
+
+    @classmethod
+    def detect(
+        cls,
+        *,
+        model: Dict[str, object],
+        image_path: str,
+        confidence_threshold: float,
+        iou_threshold: float,
+    ) -> Dict[str, object]:
+        started = cls._start_request(model)
+        try:
+            model_path = cls._model_path(model)
+            if not model_path.exists():
+                raise FileNotFoundError(f"RKNN model not found: {model_path}")
+
+            load_started = time.time()
+            image = probe_image(image_path)
+            load_image_ms = (time.time() - load_started) * 1000.0
+
+            preprocess_started = time.time()
+            target_width, target_height = cls._target_size(model)
+            preprocess = cls._build_preprocess_plan(image, target_width, target_height, phase="18h")
+            preprocess_ms = (time.time() - preprocess_started) * 1000.0
+
+            python_bin = os.environ.get("EDGEINFER_RKNN_YOLO_PYTHON", "/usr/bin/python3")
+            worker_script = str(cls._worker_script())
+            startup_timeout = float(os.environ.get("EDGEINFER_RKNN_YOLO_WORKER_STARTUP_TIMEOUT_SECONDS", "60"))
+            request_timeout = float(os.environ.get("EDGEINFER_RKNN_YOLO_WORKER_REQUEST_TIMEOUT_SECONDS", "60"))
+
+            worker = cls._get_worker(
+                python_bin=python_bin,
+                worker_script=worker_script,
+                model_path=str(model_path),
+                target_width=target_width,
+                target_height=target_height,
+                startup_timeout=startup_timeout,
+                request_timeout=request_timeout,
+            )
+
+            probe = worker.detect(
+                image_path=image_path,
+                confidence_threshold=confidence_threshold,
+                iou_threshold=iou_threshold,
+                timeout_s=request_timeout,
+            )
+
+            cls._complete_request(started, probe)
+            objects = cls._normalize_objects(probe.get("detections") or [])
+
+            return {
+                "objects": objects,
+                "image": {
+                    "path": image["path"],
+                    "format": image["format"],
+                    "width": image["width"],
+                    "height": image["height"],
+                    "channels": image["channels"],
+                    "size_bytes": image["size_bytes"],
+                    "preprocess": preprocess,
+                },
+                "model_runtime": {
+                    "backend": "rknn-yolo-worker",
+                    "model_path": str(model_path),
+                    "model_size_mb": probe.get("model_size_mb"),
+                    "worker": worker.snapshot(),
+                    "probe": probe,
+                    "output_summary": {
+                        "num_outputs": probe.get("num_outputs"),
+                        "output_shapes": probe.get("output_shapes"),
+                        "output_dtypes": probe.get("output_dtypes"),
+                        "num_detections": probe.get("num_detections"),
+                        "coordinate_space": probe.get("coordinate_space"),
+                        "bbox_input_coordinate_space": probe.get("bbox_input_coordinate_space"),
+                        "worker_reused": probe.get("worker_reused"),
+                    },
+                },
+                "latency_ms": {
+                    "load_image": round(load_image_ms, 3),
+                    "preprocess": probe.get("preprocess_ms", round(preprocess_ms, 3)),
+                    "backend_init": probe.get("worker_startup_ms", 0.0),
                     "inference": probe.get("inference_ms", 0.0),
                     "postprocess": probe.get("postprocess_ms", 0.0),
                 },

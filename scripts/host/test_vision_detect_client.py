@@ -21,6 +21,8 @@ VISION_TEST_MODEL = os.environ.get("EDGEINFER_VISION_TEST_MODEL", "").strip()
 
 
 def expected_runtime() -> str:
+    if EXPECTED_BACKEND == "rknn-yolo-worker":
+        return "phase18h-vision-worker-stabilization"
     if EXPECTED_BACKEND == "rknn-yolo-detect-probe":
         return "phase18g-vision-detect-output-refinement"
     if EXPECTED_BACKEND == "rknn-yolo-inference-probe":
@@ -33,7 +35,7 @@ def expected_runtime() -> str:
 def default_test_model() -> str:
     if VISION_TEST_MODEL:
         return VISION_TEST_MODEL
-    if EXPECTED_BACKEND == "rknn-yolo-detect-probe":
+    if EXPECTED_BACKEND in {"rknn-yolo-detect-probe", "rknn-yolo-worker"}:
         return "YOLOv11n-FP-Baseline"
     return ""
 
@@ -77,7 +79,7 @@ def request_expect_error(method: str, path: str, payload: Dict[str, Any], expect
 
 
 def find_model(task: str) -> str:
-    requested = default_test_model()
+    requested = default_test_model() if task == "object-detection" else ""
     data = request_json("GET", "/v1/models")
     if requested:
         for model in data.get("models", []):
@@ -107,7 +109,7 @@ def assert_error_code(body: Dict[str, Any], expected_code: str) -> None:
 
 def assert_latency(latency: Dict[str, Any]) -> None:
     required = ["load_image", "preprocess", "inference", "postprocess", "total"]
-    if EXPECTED_BACKEND in {"rknn-yolo-dryrun", "rknn-yolo-inference-probe", "rknn-yolo-detect-probe"}:
+    if EXPECTED_BACKEND in {"rknn-yolo-dryrun", "rknn-yolo-inference-probe", "rknn-yolo-detect-probe", "rknn-yolo-worker"}:
         required.append("backend_init")
 
     for key in required:
@@ -117,9 +119,9 @@ def assert_latency(latency: Dict[str, Any]) -> None:
         if not isinstance(value, (int, float)) or value < 0:
             raise AssertionError(f"latency_ms.{key} must be non-negative number, got {value!r}")
 
-    if EXPECTED_BACKEND in {"rknn-yolo-inference-probe", "rknn-yolo-detect-probe"} and latency["inference"] <= 0:
+    if EXPECTED_BACKEND in {"rknn-yolo-inference-probe", "rknn-yolo-detect-probe", "rknn-yolo-worker"} and latency["inference"] <= 0:
         raise AssertionError(f"inference latency should be > 0: {latency!r}")
-    if EXPECTED_BACKEND == "rknn-yolo-detect-probe" and latency["postprocess"] <= 0:
+    if EXPECTED_BACKEND in {"rknn-yolo-detect-probe", "rknn-yolo-worker"} and latency["postprocess"] <= 0:
         raise AssertionError(f"postprocess latency should be > 0 in detect probe: {latency!r}")
 
 
@@ -169,7 +171,7 @@ def assert_objects(objects: Any, image: Dict[str, Any], require_non_empty: bool)
         if not isinstance(obj["confidence"], (int, float)) or obj["confidence"] < 0:
             raise AssertionError(f"invalid object confidence: {obj!r}")
 
-        if EXPECTED_BACKEND == "rknn-yolo-detect-probe":
+        if EXPECTED_BACKEND in {"rknn-yolo-detect-probe", "rknn-yolo-worker"}:
             if obj.get("coordinate_space") != "original_image":
                 raise AssertionError(f"expected original_image coordinate_space: {obj!r}")
             if str(obj.get("class_name")) == str(obj.get("class_id")):
@@ -199,7 +201,7 @@ def assert_success_response(data: Dict[str, Any], model_id: Optional[str] = None
     if edgeinfer.get("runtime") != expected_runtime():
         raise AssertionError(f"expected runtime {expected_runtime()!r}, got {edgeinfer!r}")
 
-    if EXPECTED_BACKEND in {"rknn-yolo-dryrun", "rknn-yolo-inference-probe", "rknn-yolo-detect-probe"}:
+    if EXPECTED_BACKEND in {"rknn-yolo-dryrun", "rknn-yolo-inference-probe", "rknn-yolo-detect-probe", "rknn-yolo-worker"}:
         model_runtime = edgeinfer.get("model_runtime")
         if not isinstance(model_runtime, dict):
             raise AssertionError(f"missing model_runtime for rknn backend: {edgeinfer!r}")
@@ -209,7 +211,7 @@ def assert_success_response(data: Dict[str, Any], model_id: Optional[str] = None
         if not isinstance(probe, dict) or probe.get("ok") is not True:
             raise AssertionError(f"RKNN probe did not succeed: {model_runtime!r}")
 
-        if EXPECTED_BACKEND in {"rknn-yolo-inference-probe", "rknn-yolo-detect-probe"}:
+        if EXPECTED_BACKEND in {"rknn-yolo-inference-probe", "rknn-yolo-detect-probe", "rknn-yolo-worker"}:
             output_summary = model_runtime.get("output_summary")
             if not isinstance(output_summary, dict):
                 raise AssertionError(f"missing output_summary: {model_runtime!r}")
@@ -219,7 +221,7 @@ def assert_success_response(data: Dict[str, Any], model_id: Optional[str] = None
             if not isinstance(shapes, list) or not shapes:
                 raise AssertionError(f"expected non-empty output_shapes: {output_summary!r}")
 
-        if EXPECTED_BACKEND == "rknn-yolo-detect-probe":
+        if EXPECTED_BACKEND in {"rknn-yolo-detect-probe", "rknn-yolo-worker"}:
             output_summary = model_runtime.get("output_summary", {})
             num_detections = output_summary.get("num_detections")
             if require_objects and (not isinstance(num_detections, int) or num_detections <= 0):
@@ -239,7 +241,7 @@ def test_vision_detect_success() -> str:
     }
     data = request_json("POST", "/v1/vision/detect", payload)
     print(json.dumps(data, ensure_ascii=False, indent=2))
-    require_objects = EXPECTED_BACKEND == "rknn-yolo-detect-probe"
+    require_objects = EXPECTED_BACKEND in {"rknn-yolo-detect-probe", "rknn-yolo-worker"}
     assert_success_response(data, model_id=model_id, require_objects=require_objects)
     print("vision detect image metadata success check OK")
     return model_id
