@@ -115,5 +115,6 @@ EDGEINFER_VALIDATE_DEPLOY=1 \
 | `phase14b_controlled_benchmark.md` | Controlled LLM Serving Benchmark 脚本与执行说明 |
 | `phase14c_benchmark_run_20260705.md` | 2026-07-05 one-shot / worker benchmark 结果摘要 |
 | `phase15_api_compatibility_matrix.md` | OpenAI-compatible API 支持矩阵、错误码与后续扩展方向 |
+| `phase15b_error_response_reference.md` | OpenAI-like API 错误响应结构、错误码与客户端处理建议 |
 
 | `phase13b_project_summary.md` | 项目阶段总结、交接、简历描述与后续路线图 |
