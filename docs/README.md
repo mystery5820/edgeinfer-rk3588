@@ -127,5 +127,6 @@ EDGEINFER_VALIDATE_DEPLOY=1 \
 | `phase17b_v0_1_0_release_notes.md` | v0.1.0 release notes 草案、最终里程碑总结与后续路线 |
 | `phase17c_v0_1_0_final_checklist.md` | v0.1.0 final checklist 验收结果与正式 tag 前检查记录 |
 | `phase18_realign_with_original_design.md` | 将当前 LLM Serving milestone 重新对齐到原始多模型推理服务框架总设计 |
+| `phase18b_vision_api_skeleton.md` | `/v1/vision/detect` API skeleton、fake vision backend 与 host-side 测试 |
 
 | `phase13b_project_summary.md` | 项目阶段总结、交接、简历描述与后续路线图 |

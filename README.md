@@ -311,6 +311,7 @@ docs/README.md
 - Phase 17B v0.1.0 Release Notes / Final Milestone Summary：`docs/phase17b_v0_1_0_release_notes.md`
 - Phase 17C v0.1.0 Final Checklist：`docs/phase17c_v0_1_0_final_checklist.md`
 - Phase 18 Realign With Original Multi-Model Design：`docs/phase18_realign_with_original_design.md`
+- Phase 18B Vision API Skeleton：`docs/phase18b_vision_api_skeleton.md`
 
 ---
 
