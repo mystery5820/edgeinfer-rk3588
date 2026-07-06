@@ -271,6 +271,7 @@ docs/README.md
 - Phase 15A OpenAI-compatible API 兼容性矩阵：`docs/phase15_api_compatibility_matrix.md`
 - Phase 15B Error Response Reference：`docs/phase15b_error_response_reference.md`
 - Phase 15C Error Response Test Coverage：`docs/phase15c_error_response_tests.md`
+- Phase 15D Chat API Request / Response Examples：`docs/phase15d_chat_api_examples.md`
 
 ---
 
