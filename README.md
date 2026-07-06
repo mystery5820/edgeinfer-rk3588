@@ -273,6 +273,7 @@ docs/README.md
 - Phase 15C Error Response Test Coverage：`docs/phase15c_error_response_tests.md`
 - Phase 15D Chat API Request / Response Examples：`docs/phase15d_chat_api_examples.md`
 - Phase 15E OpenAI Python SDK Compatibility Notes：`docs/phase15e_openai_sdk_compatibility_notes.md`
+- Phase 16A Streaming Benchmark / First Content Latency：`docs/phase16a_streaming_benchmark.md`
 
 ---
 
