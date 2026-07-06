@@ -130,5 +130,6 @@ EDGEINFER_VALIDATE_DEPLOY=1 \
 | `phase18b_vision_api_skeleton.md` | `/v1/vision/detect` API skeleton、fake vision backend 与 host-side 测试 |
 | `phase18c_vision_image_input_skeleton.md` | `/v1/vision/detect` 真实 image_path 校验、图片 metadata 与 preprocess skeleton |
 | `phase18d_rknn_yolo_backend_dryrun.md` | RKNN YOLO backend dryrun、rknnlite subprocess probe 与 vision backend 模式切换 |
+| `phase18e_rknn_yolo_inference_probe.md` | RKNN YOLO inference probe、NHWC batch tensor、output_shapes 与 inference_ms |
 
 | `phase13b_project_summary.md` | 项目阶段总结、交接、简历描述与后续路线图 |

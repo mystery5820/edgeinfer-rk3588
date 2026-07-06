@@ -18,15 +18,11 @@ class RKNNYoloDryRunError(RuntimeError):
     pass
 
 
-class RKNNYoloDryBackend:
-    """RKNN YOLO dry integration backend.
+class RKNNYoloProbeError(RuntimeError):
+    pass
 
-    This backend intentionally invokes a subprocess with system Python because
-    the board-side serving venv may not contain rknnlite. It validates the real
-    RKNN model path and RKNNLite load/init/release lifecycle, but it does not
-    perform pixel preprocessing, inference output decoding or NMS yet.
-    """
 
+class _RKNNYoloBase:
     _total_requests = 0
     _completed_requests = 0
     _failed_requests = 0
@@ -82,7 +78,7 @@ class RKNNYoloDryBackend:
             or model.get("model_file")
         )
         if not value:
-            raise RKNNYoloDryRunError(
+            raise RKNNYoloProbeError(
                 f"object-detection model has no runtime_model/model_file: {model.get('id') or model.get('name')}"
             )
 
@@ -103,7 +99,7 @@ class RKNNYoloDryBackend:
         return 640, 640
 
     @staticmethod
-    def _build_preprocess_plan(image: Dict[str, object], target_width: int, target_height: int) -> Dict[str, object]:
+    def _build_preprocess_plan(image: Dict[str, object], target_width: int, target_height: int, phase: str) -> Dict[str, object]:
         width = max(1, int(image["width"]))
         height = max(1, int(image["height"]))
         scale = min(target_width / width, target_height / height)
@@ -113,7 +109,7 @@ class RKNNYoloDryBackend:
         pad_y = max(0, target_height - resized_height)
 
         return {
-            "method": "letterbox-metadata-only",
+            "method": "resize-nhwc-uint8-subprocess" if phase == "18e" else "letterbox-metadata-only",
             "target_width": target_width,
             "target_height": target_height,
             "scale": round(float(scale), 6),
@@ -123,21 +119,19 @@ class RKNNYoloDryBackend:
             "pad_right": pad_x - pad_x // 2,
             "pad_top": pad_y // 2,
             "pad_bottom": pad_y - pad_y // 2,
-            "note": "No pixel resize is performed in Phase 18D dry integration.",
+            "input_tensor_layout": "NHWC",
+            "input_tensor_shape": [1, target_height, target_width, int(image.get("channels", 3))],
+            "input_tensor_dtype": "uint8",
+            "note": (
+                "Phase 18E subprocess performs cv2 resize and NHWC uint8 tensor construction."
+                if phase == "18e"
+                else "No pixel resize is performed in Phase 18D dry integration."
+            ),
         }
 
     @staticmethod
-    def _probe_script() -> Path:
-        return PROJECT_ROOT / "scripts" / "board" / "probe_rknn_yolo_runtime.py"
-
-    @staticmethod
     def _extract_json_payload(text: str) -> Dict[str, object]:
-        """Extract the JSON object printed by the probe script from noisy RKNN logs.
-
-        RKNNLite may print warning/info lines to stdout around the script's JSON
-        payload. This helper scans for a balanced top-level JSON object and
-        parses the first object that contains an "ok" field.
-        """
+        """Extract JSON object from noisy RKNN stdout."""
 
         decoder = json.JSONDecoder()
         for idx, ch in enumerate(text):
@@ -150,25 +144,10 @@ class RKNNYoloDryBackend:
             if isinstance(payload, dict) and "ok" in payload:
                 return payload
 
-        raise RKNNYoloDryRunError(f"RKNN probe JSON payload not found in stdout: {text[-2000:]!r}")
+        raise RKNNYoloProbeError(f"RKNN probe JSON payload not found in stdout: {text[-2000:]!r}")
 
     @classmethod
-    def _run_probe(cls, model_path: Path, timeout_sec: float) -> Dict[str, object]:
-        python_bin = os.environ.get("EDGEINFER_RKNN_YOLO_PYTHON", "/usr/bin/python3")
-        script = cls._probe_script()
-
-        if not script.exists():
-            raise RKNNYoloDryRunError(f"probe script not found: {script}")
-
-        cmd = [
-            python_bin,
-            str(script),
-            "--model-path",
-            str(model_path),
-            "--runtime",
-            "rknnlite",
-        ]
-
+    def _run_probe_command(cls, cmd: List[str], timeout_sec: float) -> Dict[str, object]:
         started = time.time()
         proc = subprocess.run(
             cmd,
@@ -183,7 +162,6 @@ class RKNNYoloDryBackend:
 
         stdout = proc.stdout.strip()
         stderr = proc.stderr.strip()
-
         payload = cls._extract_json_payload(stdout)
 
         payload["subprocess"] = {
@@ -195,9 +173,74 @@ class RKNNYoloDryBackend:
         }
 
         if proc.returncode != 0 or not payload.get("ok"):
-            raise RKNNYoloDryRunError(json.dumps(payload, ensure_ascii=False))
+            raise RKNNYoloProbeError(json.dumps(payload, ensure_ascii=False))
 
         return payload
+
+    @classmethod
+    def _start_request(cls, model: Dict[str, object]) -> float:
+        cls._total_requests += 1
+        cls._last_started_at = time.time()
+        cls._current_model = model.get("id")
+        return time.time()
+
+    @classmethod
+    def _complete_request(cls, started: float, probe: Dict[str, object]) -> None:
+        elapsed_ms = (time.time() - started) * 1000.0
+        cls._completed_requests += 1
+        cls._last_latency_ms = round(elapsed_ms, 3)
+        cls._last_error = None
+        cls._last_finished_at = time.time()
+        cls._current_model = None
+        cls._last_probe = {
+            "ok": probe.get("ok"),
+            "runtime": probe.get("runtime"),
+            "model_path": probe.get("model_path"),
+            "model_size_mb": probe.get("model_size_mb"),
+            "load_rknn_ms": probe.get("load_rknn_ms"),
+            "init_runtime_ms": probe.get("init_runtime_ms"),
+            "preprocess_ms": probe.get("preprocess_ms"),
+            "inference_ms": probe.get("inference_ms"),
+            "release_ms": probe.get("release_ms"),
+            "num_outputs": probe.get("num_outputs"),
+            "output_shapes": probe.get("output_shapes"),
+            "subprocess_elapsed_ms": probe.get("subprocess", {}).get("elapsed_ms"),
+        }
+
+    @classmethod
+    def _fail_request(cls, exc: Exception) -> None:
+        cls._failed_requests += 1
+        cls._last_error = repr(exc)
+        cls._last_finished_at = time.time()
+        cls._current_model = None
+
+
+class RKNNYoloDryBackend(_RKNNYoloBase):
+    """RKNN YOLO load/init/release dry integration backend."""
+
+    @staticmethod
+    def _probe_script() -> Path:
+        return PROJECT_ROOT / "scripts" / "board" / "probe_rknn_yolo_runtime.py"
+
+    @classmethod
+    def _run_probe(cls, model_path: Path, timeout_sec: float) -> Dict[str, object]:
+        python_bin = os.environ.get("EDGEINFER_RKNN_YOLO_PYTHON", "/usr/bin/python3")
+        script = cls._probe_script()
+
+        if not script.exists():
+            raise RKNNYoloProbeError(f"probe script not found: {script}")
+
+        return cls._run_probe_command(
+            [
+                python_bin,
+                str(script),
+                "--model-path",
+                str(model_path),
+                "--runtime",
+                "rknnlite",
+            ],
+            timeout_sec=timeout_sec,
+        )
 
     @classmethod
     def detect(
@@ -208,11 +251,7 @@ class RKNNYoloDryBackend:
         confidence_threshold: float,
         iou_threshold: float,
     ) -> Dict[str, object]:
-        cls._total_requests += 1
-        cls._last_started_at = time.time()
-        cls._current_model = model.get("id")
-
-        started = time.time()
+        started = cls._start_request(model)
         try:
             model_path = cls._model_path(model)
             if not model_path.exists():
@@ -224,7 +263,7 @@ class RKNNYoloDryBackend:
 
             preprocess_started = time.time()
             target_width, target_height = cls._target_size(model)
-            preprocess = cls._build_preprocess_plan(image, target_width, target_height)
+            preprocess = cls._build_preprocess_plan(image, target_width, target_height, phase="18d")
             preprocess_ms = (time.time() - preprocess_started) * 1000.0
 
             probe_started = time.time()
@@ -234,27 +273,10 @@ class RKNNYoloDryBackend:
             )
             backend_init_ms = (time.time() - probe_started) * 1000.0
 
-            objects: List[Dict[str, object]] = []
-            elapsed_ms = (time.time() - started) * 1000.0
-
-            cls._completed_requests += 1
-            cls._last_latency_ms = round(elapsed_ms, 3)
-            cls._last_error = None
-            cls._last_finished_at = time.time()
-            cls._current_model = None
-            cls._last_probe = {
-                "ok": probe.get("ok"),
-                "runtime": probe.get("runtime"),
-                "model_path": probe.get("model_path"),
-                "model_size_mb": probe.get("model_size_mb"),
-                "load_rknn_ms": probe.get("load_rknn_ms"),
-                "init_runtime_ms": probe.get("init_runtime_ms"),
-                "release_ms": probe.get("release_ms"),
-                "subprocess_elapsed_ms": probe.get("subprocess", {}).get("elapsed_ms"),
-            }
+            cls._complete_request(started, probe)
 
             return {
-                "objects": objects,
+                "objects": [],
                 "image": {
                     "path": image["path"],
                     "format": image["format"],
@@ -279,8 +301,125 @@ class RKNNYoloDryBackend:
                 },
             }
         except Exception as exc:
-            cls._failed_requests += 1
-            cls._last_error = repr(exc)
-            cls._last_finished_at = time.time()
-            cls._current_model = None
+            cls._fail_request(exc)
             raise
+
+
+class RKNNYoloInferenceProbeBackend(_RKNNYoloBase):
+    """RKNN YOLO inference probe backend.
+
+    This backend invokes system Python to build an NHWC uint8 tensor and run one
+    real RKNNLite inference. It returns output metadata only; YOLO decode / NMS
+    remains a later phase.
+    """
+
+    @staticmethod
+    def _probe_script() -> Path:
+        return PROJECT_ROOT / "scripts" / "board" / "probe_rknn_yolo_inference.py"
+
+    @classmethod
+    def _run_probe(
+        cls,
+        *,
+        model_path: Path,
+        image_path: str,
+        target_width: int,
+        target_height: int,
+        timeout_sec: float,
+    ) -> Dict[str, object]:
+        python_bin = os.environ.get("EDGEINFER_RKNN_YOLO_PYTHON", "/usr/bin/python3")
+        script = cls._probe_script()
+
+        if not script.exists():
+            raise RKNNYoloProbeError(f"inference probe script not found: {script}")
+
+        return cls._run_probe_command(
+            [
+                python_bin,
+                str(script),
+                "--model-path",
+                str(model_path),
+                "--image-path",
+                image_path,
+                "--input-width",
+                str(target_width),
+                "--input-height",
+                str(target_height),
+                "--runtime",
+                "rknnlite",
+            ],
+            timeout_sec=timeout_sec,
+        )
+
+    @classmethod
+    def detect(
+        cls,
+        *,
+        model: Dict[str, object],
+        image_path: str,
+        confidence_threshold: float,
+        iou_threshold: float,
+    ) -> Dict[str, object]:
+        started = cls._start_request(model)
+        try:
+            model_path = cls._model_path(model)
+            if not model_path.exists():
+                raise FileNotFoundError(f"RKNN model not found: {model_path}")
+
+            load_started = time.time()
+            image = probe_image(image_path)
+            load_image_ms = (time.time() - load_started) * 1000.0
+
+            preprocess_started = time.time()
+            target_width, target_height = cls._target_size(model)
+            preprocess = cls._build_preprocess_plan(image, target_width, target_height, phase="18e")
+            preprocess_ms = (time.time() - preprocess_started) * 1000.0
+
+            probe = cls._run_probe(
+                model_path=model_path,
+                image_path=image_path,
+                target_width=target_width,
+                target_height=target_height,
+                timeout_sec=float(os.environ.get("EDGEINFER_RKNN_YOLO_PROBE_TIMEOUT_SECONDS", "120")),
+            )
+
+            cls._complete_request(started, probe)
+
+            return {
+                "objects": [],
+                "image": {
+                    "path": image["path"],
+                    "format": image["format"],
+                    "width": image["width"],
+                    "height": image["height"],
+                    "channels": image["channels"],
+                    "size_bytes": image["size_bytes"],
+                    "preprocess": preprocess,
+                },
+                "model_runtime": {
+                    "backend": "rknn-yolo-inference-probe",
+                    "model_path": str(model_path),
+                    "model_size_mb": probe.get("model_size_mb"),
+                    "probe": probe,
+                    "output_summary": {
+                        "num_outputs": probe.get("num_outputs"),
+                        "output_shapes": probe.get("output_shapes"),
+                        "output_dtypes": probe.get("output_dtypes"),
+                        "output_stats": probe.get("output_stats"),
+                    },
+                },
+                "latency_ms": {
+                    "load_image": round(load_image_ms, 3),
+                    "preprocess": round(preprocess_ms, 3),
+                    "backend_init": probe.get("backend_init_ms", 0.0),
+                    "inference": probe.get("inference_ms", 0.0),
+                    "postprocess": 0.0,
+                },
+            }
+        except Exception as exc:
+            cls._fail_request(exc)
+            raise
+
+
+# Backward-compatible alias for Phase 18D API exception handling.
+RKNNYoloDryRunError = RKNNYoloProbeError

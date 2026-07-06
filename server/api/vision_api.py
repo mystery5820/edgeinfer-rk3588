@@ -10,7 +10,11 @@ from pydantic import BaseModel, Field
 
 from server.model_manager.registry import ModelRegistry
 from server.runtime.fake_vision_backend import FakeVisionBackend
-from server.runtime.rknn_yolo_backend import RKNNYoloDryBackend, RKNNYoloDryRunError
+from server.runtime.rknn_yolo_backend import (
+    RKNNYoloDryBackend,
+    RKNNYoloInferenceProbeBackend,
+    RKNNYoloProbeError,
+)
 from server.vision.image_probe import ImageProbeError
 
 router = APIRouter(prefix="/v1", tags=["vision"])
@@ -29,13 +33,27 @@ def _vision_backend_mode() -> str:
 
 def _vision_backend_name() -> str:
     mode = _vision_backend_mode()
+    if mode in {"rknn-inference", "rknn-yolo-inference", "rknn-yolo-inference-probe", "rknn-yolo-probe"}:
+        return "rknn-yolo-inference-probe"
     if mode in {"rknn", "rknn-yolo", "rknn-dryrun", "rknn-yolo-dryrun"}:
         return "rknn-yolo-dryrun"
     return "fake-vision"
 
 
+def _vision_runtime_name() -> str:
+    backend_name = _vision_backend_name()
+    if backend_name == "rknn-yolo-inference-probe":
+        return "phase18e-rknn-yolo-inference-probe"
+    if backend_name == "rknn-yolo-dryrun":
+        return "phase18d-rknn-yolo-dryrun"
+    return "phase18c-image-input-skeleton"
+
+
 def _vision_metrics_snapshot() -> Dict[str, object]:
-    if _vision_backend_name() == "rknn-yolo-dryrun":
+    backend_name = _vision_backend_name()
+    if backend_name == "rknn-yolo-inference-probe":
+        return RKNNYoloInferenceProbeBackend.metrics_snapshot()
+    if backend_name == "rknn-yolo-dryrun":
         return RKNNYoloDryBackend.metrics_snapshot()
     return FakeVisionBackend.metrics_snapshot()
 
@@ -57,6 +75,7 @@ def _vision_error_detail(
         "edgeinfer": {
             "model": model_id,
             "backend": _vision_backend_name(),
+            "runtime": _vision_runtime_name(),
             "vision": _vision_metrics_snapshot(),
         },
     }
@@ -111,7 +130,16 @@ def _run_backend(
     confidence_threshold: float,
     iou_threshold: float,
 ) -> Dict[str, object]:
-    if _vision_backend_name() == "rknn-yolo-dryrun":
+    backend_name = _vision_backend_name()
+    if backend_name == "rknn-yolo-inference-probe":
+        return RKNNYoloInferenceProbeBackend.detect(
+            model=model,
+            image_path=image_path,
+            confidence_threshold=confidence_threshold,
+            iou_threshold=iou_threshold,
+        )
+
+    if backend_name == "rknn-yolo-dryrun":
         return RKNNYoloDryBackend.detect(
             model=model,
             image_path=image_path,
@@ -177,7 +205,7 @@ def vision_detect(req: VisionDetectRequest):
                 retryable=False,
             ),
         ) from exc
-    except RKNNYoloDryRunError as exc:
+    except RKNNYoloProbeError as exc:
         raise HTTPException(
             status_code=500,
             detail=_vision_error_detail(
@@ -192,9 +220,6 @@ def vision_detect(req: VisionDetectRequest):
     latency_ms = dict(result["latency_ms"])
     latency_ms["total"] = round(total_ms, 3)
 
-    backend_name = _vision_backend_name()
-    runtime_name = "phase18d-rknn-yolo-dryrun" if backend_name == "rknn-yolo-dryrun" else "phase18c-image-input-skeleton"
-
     return {
         "id": f"visiondet-{uuid.uuid4().hex[:12]}",
         "object": "vision.detection",
@@ -204,15 +229,15 @@ def vision_detect(req: VisionDetectRequest):
         "objects": result["objects"],
         "latency_ms": latency_ms,
         "edgeinfer": {
-            "backend": backend_name,
-            "runtime": runtime_name,
+            "backend": _vision_backend_name(),
+            "runtime": _vision_runtime_name(),
             "image_path": image_path,
             "thresholds": {
                 "confidence": req.confidence_threshold,
                 "iou": req.iou_threshold,
             },
             "model_runtime": result.get("model_runtime"),
-            "note": "Phase 18D can validate RKNNLite load/init/release via subprocess dryrun. Real inference and YOLO postprocess will be integrated later.",
+            "note": "Phase 18E can run one real RKNNLite inference and return output metadata. YOLO decode/NMS will be integrated later.",
             "vision": _vision_metrics_snapshot(),
         },
     }
