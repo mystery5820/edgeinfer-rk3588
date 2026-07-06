@@ -120,5 +120,6 @@ EDGEINFER_VALIDATE_DEPLOY=1 \
 | `phase15d_chat_api_examples.md` | Chat API 请求、成功响应与错误响应示例 |
 | `phase15e_openai_sdk_compatibility_notes.md` | OpenAI Python SDK base_url 接入、streaming 条件与兼容差异说明 |
 | `phase16a_streaming_benchmark.md` | Streaming SSE benchmark 工具、首 content 延迟指标与执行说明 |
+| `phase16b_streaming_benchmark_run_20260706.md` | 2026-07-06 streaming benchmark 实测结果摘要 |
 
 | `phase13b_project_summary.md` | 项目阶段总结、交接、简历描述与后续路线图 |
