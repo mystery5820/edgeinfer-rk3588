@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import time
 import uuid
 from typing import Dict, Optional
@@ -9,6 +10,7 @@ from pydantic import BaseModel, Field
 
 from server.model_manager.registry import ModelRegistry
 from server.runtime.fake_vision_backend import FakeVisionBackend
+from server.runtime.rknn_yolo_backend import RKNNYoloDryBackend, RKNNYoloDryRunError
 from server.vision.image_probe import ImageProbeError
 
 router = APIRouter(prefix="/v1", tags=["vision"])
@@ -19,6 +21,23 @@ class VisionDetectRequest(BaseModel):
     image_path: Optional[str] = Field(default=None)
     confidence_threshold: float = Field(default=0.25, ge=0.0, le=1.0)
     iou_threshold: float = Field(default=0.45, ge=0.0, le=1.0)
+
+
+def _vision_backend_mode() -> str:
+    return os.environ.get("EDGEINFER_VISION_BACKEND_MODE", "fake").strip().lower()
+
+
+def _vision_backend_name() -> str:
+    mode = _vision_backend_mode()
+    if mode in {"rknn", "rknn-yolo", "rknn-dryrun", "rknn-yolo-dryrun"}:
+        return "rknn-yolo-dryrun"
+    return "fake-vision"
+
+
+def _vision_metrics_snapshot() -> Dict[str, object]:
+    if _vision_backend_name() == "rknn-yolo-dryrun":
+        return RKNNYoloDryBackend.metrics_snapshot()
+    return FakeVisionBackend.metrics_snapshot()
 
 
 def _vision_error_detail(
@@ -37,8 +56,8 @@ def _vision_error_detail(
         },
         "edgeinfer": {
             "model": model_id,
-            "backend": "fake-vision",
-            "vision": FakeVisionBackend.metrics_snapshot(),
+            "backend": _vision_backend_name(),
+            "vision": _vision_metrics_snapshot(),
         },
     }
 
@@ -85,6 +104,29 @@ def _resolve_vision_model(registry: ModelRegistry, model_id: Optional[str]) -> D
     return model
 
 
+def _run_backend(
+    *,
+    model: Dict[str, object],
+    image_path: str,
+    confidence_threshold: float,
+    iou_threshold: float,
+) -> Dict[str, object]:
+    if _vision_backend_name() == "rknn-yolo-dryrun":
+        return RKNNYoloDryBackend.detect(
+            model=model,
+            image_path=image_path,
+            confidence_threshold=confidence_threshold,
+            iou_threshold=iou_threshold,
+        )
+
+    return FakeVisionBackend.detect(
+        model=model,
+        image_path=image_path,
+        confidence_threshold=confidence_threshold,
+        iou_threshold=iou_threshold,
+    )
+
+
 @router.post("/vision/detect")
 def vision_detect(req: VisionDetectRequest):
     registry = ModelRegistry()
@@ -105,18 +147,22 @@ def vision_detect(req: VisionDetectRequest):
     started = time.time()
 
     try:
-        result = FakeVisionBackend.detect(
+        result = _run_backend(
             model=model,
             image_path=image_path,
             confidence_threshold=req.confidence_threshold,
             iou_threshold=req.iou_threshold,
         )
     except FileNotFoundError as exc:
+        message = str(exc)
+        code = "image_not_found"
+        if "RKNN model not found" in message:
+            code = "vision_model_file_not_found"
         raise HTTPException(
             status_code=404,
             detail=_vision_error_detail(
-                code="image_not_found",
-                message=str(exc),
+                code=code,
+                message=message,
                 model_id=str(model.get("id")),
                 retryable=False,
             ),
@@ -131,10 +177,23 @@ def vision_detect(req: VisionDetectRequest):
                 retryable=False,
             ),
         ) from exc
+    except RKNNYoloDryRunError as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=_vision_error_detail(
+                code="rknn_yolo_runtime_error",
+                message=str(exc),
+                model_id=str(model.get("id")),
+                retryable=True,
+            ),
+        ) from exc
 
     total_ms = (time.time() - started) * 1000.0
     latency_ms = dict(result["latency_ms"])
     latency_ms["total"] = round(total_ms, 3)
+
+    backend_name = _vision_backend_name()
+    runtime_name = "phase18d-rknn-yolo-dryrun" if backend_name == "rknn-yolo-dryrun" else "phase18c-image-input-skeleton"
 
     return {
         "id": f"visiondet-{uuid.uuid4().hex[:12]}",
@@ -145,14 +204,15 @@ def vision_detect(req: VisionDetectRequest):
         "objects": result["objects"],
         "latency_ms": latency_ms,
         "edgeinfer": {
-            "backend": "fake-vision",
-            "runtime": "phase18c-image-input-skeleton",
+            "backend": backend_name,
+            "runtime": runtime_name,
             "image_path": image_path,
             "thresholds": {
                 "confidence": req.confidence_threshold,
                 "iou": req.iou_threshold,
             },
-            "note": "Phase 18C validates image_path and probes image metadata. Real RKNN YOLO backend will be integrated later.",
-            "vision": FakeVisionBackend.metrics_snapshot(),
+            "model_runtime": result.get("model_runtime"),
+            "note": "Phase 18D can validate RKNNLite load/init/release via subprocess dryrun. Real inference and YOLO postprocess will be integrated later.",
+            "vision": _vision_metrics_snapshot(),
         },
     }

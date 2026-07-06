@@ -313,6 +313,7 @@ docs/README.md
 - Phase 18 Realign With Original Multi-Model Design：`docs/phase18_realign_with_original_design.md`
 - Phase 18B Vision API Skeleton：`docs/phase18b_vision_api_skeleton.md`
 - Phase 18C Vision Image Input / Preprocess Skeleton：`docs/phase18c_vision_image_input_skeleton.md`
+- Phase 18D RKNN YOLO Backend Dry Integration：`docs/phase18d_rknn_yolo_backend_dryrun.md`
 
 ---
 

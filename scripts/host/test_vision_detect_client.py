@@ -11,11 +11,18 @@ from typing import Any, Dict, Optional
 
 
 BOARD_URL = os.environ.get("EDGEINFER_BOARD_URL", "http://192.168.43.7:8000").rstrip("/")
-TIMEOUT_SECONDS = float(os.environ.get("EDGEINFER_TIMEOUT_SECONDS", "30"))
+TIMEOUT_SECONDS = float(os.environ.get("EDGEINFER_TIMEOUT_SECONDS", "120"))
 VISION_TEST_IMAGE_PATH = os.environ.get(
     "EDGEINFER_VISION_TEST_IMAGE_PATH",
     "/home/linaro/edgeinfer-rk3588-board/datasets/coco128/images/train2017/000000000089.jpg",
 )
+EXPECTED_BACKEND = os.environ.get("EDGEINFER_EXPECT_VISION_BACKEND", "fake-vision").strip()
+
+
+def expected_runtime() -> str:
+    if EXPECTED_BACKEND == "rknn-yolo-dryrun":
+        return "phase18d-rknn-yolo-dryrun"
+    return "phase18c-image-input-skeleton"
 
 
 def url(path: str) -> str:
@@ -78,6 +85,9 @@ def assert_error_code(body: Dict[str, Any], expected_code: str) -> None:
 
 def assert_latency(latency: Dict[str, Any]) -> None:
     required = ["load_image", "preprocess", "inference", "postprocess", "total"]
+    if EXPECTED_BACKEND == "rknn-yolo-dryrun":
+        required.append("backend_init")
+
     for key in required:
         if key not in latency:
             raise AssertionError(f"missing latency_ms.{key}: {latency!r}")
@@ -116,10 +126,20 @@ def assert_success_response(data: Dict[str, Any], model_id: Optional[str] = None
     assert_image(data.get("image") or {})
 
     edgeinfer = data.get("edgeinfer") or {}
-    if edgeinfer.get("backend") != "fake-vision":
-        raise AssertionError(f"expected fake-vision backend, got {edgeinfer!r}")
-    if edgeinfer.get("runtime") != "phase18c-image-input-skeleton":
-        raise AssertionError(f"expected phase18c-image-input-skeleton runtime, got {edgeinfer!r}")
+    if edgeinfer.get("backend") != EXPECTED_BACKEND:
+        raise AssertionError(f"expected backend {EXPECTED_BACKEND!r}, got {edgeinfer!r}")
+    if edgeinfer.get("runtime") != expected_runtime():
+        raise AssertionError(f"expected runtime {expected_runtime()!r}, got {edgeinfer!r}")
+
+    if EXPECTED_BACKEND == "rknn-yolo-dryrun":
+        model_runtime = edgeinfer.get("model_runtime")
+        if not isinstance(model_runtime, dict):
+            raise AssertionError(f"missing model_runtime for rknn dryrun: {edgeinfer!r}")
+        if model_runtime.get("backend") != "rknn-yolo-dryrun":
+            raise AssertionError(f"unexpected model_runtime backend: {model_runtime!r}")
+        probe = model_runtime.get("probe")
+        if not isinstance(probe, dict) or probe.get("ok") is not True:
+            raise AssertionError(f"RKNN probe did not succeed: {model_runtime!r}")
 
 
 def test_vision_detect_success() -> str:
@@ -203,6 +223,8 @@ def main() -> int:
     print(f"BOARD_URL={BOARD_URL}")
     print(f"TIMEOUT_SECONDS={TIMEOUT_SECONDS}")
     print(f"VISION_TEST_IMAGE_PATH={VISION_TEST_IMAGE_PATH}")
+    print(f"EXPECTED_BACKEND={EXPECTED_BACKEND}")
+    print(f"EXPECTED_RUNTIME={expected_runtime()}")
     print()
 
     model_id = test_vision_detect_success()
