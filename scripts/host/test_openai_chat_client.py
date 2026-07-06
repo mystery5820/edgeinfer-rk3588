@@ -446,6 +446,129 @@ def test_response_format_rejected() -> None:
     print()
 
 
+def test_invalid_stop_rejected() -> None:
+    print("=== 8. invalid stop rejection ===")
+    payload = {
+        "model": MODEL_ID,
+        "messages": [
+            {
+                "role": "user",
+                "content": "请用一句话介绍 RK3588。",
+            }
+        ],
+        "max_tokens": 16,
+        "stop": "",
+    }
+
+    status, body = request_json("POST", "/v1/chat/completions", payload, expected_status=400)
+    code = get_error_code(body)
+    if code != "invalid_stop":
+        raise AssertionError(f"expected invalid_stop, got {code!r}: {body!r}")
+
+    print(f"HTTP {status}")
+    print(json.dumps(body, ensure_ascii=False, indent=2))
+    print("invalid stop rejection check OK")
+    print()
+
+
+def test_model_not_found_rejected() -> None:
+    print("=== 9. model_not_found rejection ===")
+    payload = {
+        "model": "__edgeinfer_missing_model__",
+        "messages": [
+            {
+                "role": "user",
+                "content": "hello",
+            }
+        ],
+        "max_tokens": 16,
+    }
+
+    status, body = request_json("POST", "/v1/chat/completions", payload, expected_status=404)
+    code = get_error_code(body)
+    if code != "model_not_found":
+        raise AssertionError(f"expected model_not_found, got {code!r}: {body!r}")
+
+    print(f"HTTP {status}")
+    print(json.dumps(body, ensure_ascii=False, indent=2))
+    print("model_not_found rejection check OK")
+    print()
+
+
+def _extract_model_items(body: Dict[str, Any]) -> List[Dict[str, Any]]:
+    candidates = body.get("data")
+    if isinstance(candidates, list):
+        return [item for item in candidates if isinstance(item, dict)]
+
+    candidates = body.get("models")
+    if isinstance(candidates, list):
+        return [item for item in candidates if isinstance(item, dict)]
+
+    if isinstance(body, list):
+        return [item for item in body if isinstance(item, dict)]
+
+    return []
+
+
+def _model_identifier(item: Dict[str, Any]) -> Optional[str]:
+    for key in ("id", "model", "name"):
+        value = item.get(key)
+        if isinstance(value, str) and value:
+            return value
+    return None
+
+
+def _find_non_llm_model_id() -> Optional[str]:
+    _, body = request_json("GET", "/v1/models", expected_status=200)
+    for item in _extract_model_items(body):
+        task = str(item.get("task", "")).lower()
+        model_type = str(item.get("type", "")).lower()
+        model_id = _model_identifier(item)
+
+        if not model_id:
+            continue
+
+        combined = f"{task} {model_type} {model_id}".lower()
+        if "llm" in combined or "text-generation" in combined or "chat" in combined:
+            continue
+
+        return model_id
+
+    return None
+
+
+def test_model_not_llm_rejected() -> None:
+    print("=== 10. model_not_llm rejection ===")
+    model_id = _find_non_llm_model_id()
+    if not model_id:
+        print("SKIP: no non-LLM model exposed by /v1/models")
+        print()
+        return
+
+    payload = {
+        "model": model_id,
+        "messages": [
+            {
+                "role": "user",
+                "content": "hello",
+            }
+        ],
+        "max_tokens": 16,
+    }
+
+    status, body = request_json("POST", "/v1/chat/completions", payload, expected_status=400)
+    code = get_error_code(body)
+    if code != "model_not_llm":
+        raise AssertionError(f"expected model_not_llm for model {model_id!r}, got {code!r}: {body!r}")
+
+    print(f"model_id: {model_id}")
+    print(f"HTTP {status}")
+    print(json.dumps(body, ensure_ascii=False, indent=2))
+    print("model_not_llm rejection check OK")
+    print()
+
+
+
 def main() -> int:
     started = time.time()
 
@@ -463,6 +586,9 @@ def main() -> int:
         test_n_rejected()
         test_top_p_rejected()
         test_response_format_rejected()
+        test_invalid_stop_rejected()
+        test_model_not_found_rejected()
+        test_model_not_llm_rejected()
     except Exception as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 1

@@ -573,10 +573,10 @@ else:
 | `response_format_not_supported` | `scripts/host/test_openai_chat_client.py` / `scripts/host/smoke_test_serving.sh` |
 | `stream_backend_not_supported` | `scripts/host/test_openai_chat_client.py` / `scripts/host/smoke_test_serving.sh` |
 | `llm_backend_busy` | `scripts/host/smoke_test_serving.sh` / Phase 9 busy validation |
-| `invalid_stop` | API 逻辑已实现，后续可补 smoke test |
-| `n_not_supported` | API 逻辑已实现，后续可补 Python client assertion |
-| `model_not_found` | API 逻辑已实现，后续可补 Python client assertion |
-| `model_not_llm` | API 逻辑已实现，后续可补 Python client assertion |
+| `invalid_stop` | `scripts/host/test_openai_chat_client.py` |
+| `n_not_supported` | `scripts/host/test_openai_chat_client.py` |
+| `model_not_found` | `scripts/host/test_openai_chat_client.py` |
+| `model_not_llm` | `scripts/host/test_openai_chat_client.py`，无非 LLM 模型时 skip |
 | `llm_timeout` | 异常路径，后续可通过低 timeout 测试 |
 | `rkllm_runtime_error` | 异常路径，后续可通过 fake bad model/runtime 测试 |
 

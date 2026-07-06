@@ -270,6 +270,7 @@ docs/README.md
 - Phase 14C Benchmark run 2026-07-05 摘要：`docs/phase14c_benchmark_run_20260705.md`
 - Phase 15A OpenAI-compatible API 兼容性矩阵：`docs/phase15_api_compatibility_matrix.md`
 - Phase 15B Error Response Reference：`docs/phase15b_error_response_reference.md`
+- Phase 15C Error Response Test Coverage：`docs/phase15c_error_response_tests.md`
 
 ---
 
