@@ -320,6 +320,7 @@ docs/README.md
 - Phase 18H Vision Worker Stabilization：`docs/phase18h_vision_worker_stabilization.md`
 - Phase 18I Vision Queue Busy Rejection：`docs/phase18i_vision_queue_busy_rejection.md`
 - Phase 18J Vision Default Model and Metadata Cleanup：`docs/phase18j_vision_default_model_metadata_cleanup.md`
+- Phase 18K Vision Serving Polish：`docs/phase18k_vision_serving_polish.md`
 
 ---
 
@@ -349,6 +350,53 @@ docs/README.md
 | `phase11-openai-sdk-examples` | OpenAI Python SDK 示例 |
 | `phase12a-estimated-usage` | estimated usage token 统计 |
 | `phase12b-finish-reason-research` | finish_reason=length 语义调研 |
+
+## Vision Serving 快速示例
+
+默认 vision detect 请求不需要显式传 `model`。Phase 18J 后默认使用 `YOLOv11n-FP-Baseline`：
+
+```bash
+curl -s http://192.168.43.7:8000/v1/vision/detect \
+  -H "Content-Type: application/json" \
+  -d '{
+    "image_path": "/home/linaro/edgeinfer-rk3588-board/datasets/coco128/images/train2017/000000000089.jpg"
+  }' | python3 -m json.tool
+```
+
+显式指定模型：
+
+```bash
+curl -s http://192.168.43.7:8000/v1/vision/detect \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "YOLOv11n-FP-Baseline",
+    "image_path": "/home/linaro/edgeinfer-rk3588-board/datasets/coco128/images/train2017/000000000089.jpg",
+    "confidence_threshold": 0.25,
+    "iou_threshold": 0.45
+  }' | python3 -m json.tool
+```
+
+运行 host demo：
+
+```bash
+bash scripts/host/demo_vision_detect.sh
+```
+
+并发 busy rejection 测试：
+
+```bash
+python3 scripts/host/test_vision_busy_rejection.py
+```
+
+典型输出语义：
+
+```text
+objects[].bbox       原图坐标系中的 xyxy 检测框
+objects[].bbox_input 模型输入 640x640 坐标系中的 xyxy 检测框
+latency_ms.backend_init 首次 worker 启动耗时，worker 复用时为 0.0
+edgeinfer.vision.queue.queue_policy = reject_when_busy
+```
+
 
 ---
 

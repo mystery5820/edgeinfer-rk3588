@@ -136,5 +136,6 @@ EDGEINFER_VALIDATE_DEPLOY=1 \
 | `phase18h_vision_worker_stabilization.md` | persistent RKNN YOLO worker、rknn-yolo-worker backend 与重复初始化开销消除 |
 | `phase18i_vision_queue_busy_rejection.md` | VisionRequestQueue、reject_when_busy、429 vision_backend_busy 与 queue metrics |
 | `phase18j_vision_default_model_metadata_cleanup.md` | 默认 FP vision model、direct resize metadata、preprocess 坐标语义清理 |
+| `phase18k_vision_serving_polish.md` | Vision Serving 使用示例、响应字段说明、demo 脚本与 Phase 18 收尾整理 |
 
 | `phase13b_project_summary.md` | 项目阶段总结、交接、简历描述与后续路线图 |
