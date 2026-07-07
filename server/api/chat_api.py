@@ -345,6 +345,7 @@ async def _stream_chat_events(
     effective_max_new_tokens: int,
     stop_sequences: List[str],
     lease,
+    npu_lease,
 ) -> AsyncIterator[str]:
     chunk_id = f"chatcmpl-{uuid.uuid4().hex[:12]}"
     created = int(time.time())
@@ -436,13 +437,16 @@ async def _stream_chat_events(
         yield _done_sse()
 
         success = True
+        npu_lease.finish_success()
         lease.finish_success()
 
     except asyncio.CancelledError as exc:
+        npu_lease.finish_error(exc)
         lease.finish_error(exc)
         raise
 
     except Exception as exc:
+        npu_lease.finish_error(exc)
         lease.finish_error(exc)
         error_payload: Dict[str, object] = {
             "error": {
@@ -462,8 +466,11 @@ async def _stream_chat_events(
         yield _done_sse()
 
     finally:
-        if not success and not lease.released:
-            lease.finish_error("stream closed before completion")
+        if not success:
+            if not getattr(npu_lease, "released", False):
+                npu_lease.finish_error("stream closed before completion")
+            if not lease.released:
+                lease.finish_error("stream closed before completion")
 
 
 async def _stream_chat_completion(
@@ -500,6 +507,24 @@ async def _stream_chat_completion(
             ),
         )
 
+    try:
+        npu_lease = npu_resource_guard.acquire_nowait(
+            task="text-generation",
+            owner="chat-completions-stream",
+            model_id=str(model_id),
+        )
+    except NPUResourceBusyError as e:
+        if not lease.released:
+            lease.finish_error(e)
+        raise HTTPException(
+            status_code=429,
+            detail=npu_resource_error_detail(
+                task="text-generation",
+                owner="chat-completions-stream",
+                model_id=str(model_id),
+            ),
+        ) from e
+
     return StreamingResponse(
         _stream_chat_events(
             req=req,
@@ -510,6 +535,7 @@ async def _stream_chat_completion(
             effective_max_new_tokens=effective_max_new_tokens,
             stop_sequences=stop_sequences,
             lease=lease,
+            npu_lease=npu_lease,
         ),
         media_type="text/event-stream",
         headers={
