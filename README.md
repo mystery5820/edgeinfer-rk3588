@@ -321,6 +321,7 @@ docs/README.md
 - Phase 18I Vision Queue Busy Rejection：`docs/phase18i_vision_queue_busy_rejection.md`
 - Phase 18J Vision Default Model and Metadata Cleanup：`docs/phase18j_vision_default_model_metadata_cleanup.md`
 - Phase 18K Vision Serving Polish：`docs/phase18k_vision_serving_polish.md`
+- Phase 19A Unified Inference VLM-Ready：`docs/phase19a_unified_inference_vlm_ready.md`
 
 ---
 
@@ -399,6 +400,73 @@ edgeinfer.vision.queue.queue_policy = reject_when_busy
 
 
 ---
+
+## Unified Inference API
+
+Phase 19A 新增统一推理入口：
+
+```text
+/v1/infer
+```
+
+它不会替代已有接口，而是通过 `task` 分发到已有能力或未来能力：
+
+```text
+text-generation           -> /v1/chat/completions
+object-detection          -> /v1/vision/detect
+vision-language           -> VLM placeholder
+image-captioning          -> VLM placeholder
+visual-question-answering -> VLM placeholder
+multimodal-chat           -> VLM placeholder
+```
+
+查看任务列表：
+
+```bash
+curl -s http://192.168.43.7:8000/v1/infer/tasks | python3 -m json.tool
+```
+
+统一目标检测示例：
+
+```bash
+curl -s http://192.168.43.7:8000/v1/infer \
+  -H "Content-Type: application/json" \
+  -d '{
+    "task": "object-detection",
+    "model": "YOLOv11n-FP-Baseline",
+    "input": {
+      "image_path": "/home/linaro/edgeinfer-rk3588-board/datasets/coco128/images/train2017/000000000089.jpg"
+    },
+    "parameters": {
+      "confidence_threshold": 0.25,
+      "iou_threshold": 0.45
+    }
+  }' | python3 -m json.tool
+```
+
+VLM 预留任务示例：
+
+```bash
+curl -s http://192.168.43.7:8000/v1/infer \
+  -H "Content-Type: application/json" \
+  -d '{
+    "task": "vision-language",
+    "model": "future-vlm-model",
+    "input": {
+      "image_path": "/home/linaro/test.jpg",
+      "text": "这张图片里有什么？"
+    }
+  }' | python3 -m json.tool
+```
+
+当前 VLM 返回：
+
+```text
+HTTP 501
+error.code = vlm_backend_not_ready
+backend = vlm-placeholder
+```
+
 
 ## 14. 项目当前状态
 
