@@ -319,6 +319,7 @@ docs/README.md
 - Phase 18G Vision Detect Output Refinement：`docs/phase18g_vision_detect_output_refinement.md`
 - Phase 18H Vision Worker Stabilization：`docs/phase18h_vision_worker_stabilization.md`
 - Phase 18I Vision Queue Busy Rejection：`docs/phase18i_vision_queue_busy_rejection.md`
+- Phase 18J Vision Default Model and Metadata Cleanup：`docs/phase18j_vision_default_model_metadata_cleanup.md`
 
 ---
 

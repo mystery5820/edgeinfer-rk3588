@@ -18,11 +18,12 @@ VISION_TEST_IMAGE_PATH = os.environ.get(
 )
 EXPECTED_BACKEND = os.environ.get("EDGEINFER_EXPECT_VISION_BACKEND", "fake-vision").strip()
 VISION_TEST_MODEL = os.environ.get("EDGEINFER_VISION_TEST_MODEL", "").strip()
+EXPECTED_DEFAULT_MODEL = os.environ.get("EDGEINFER_EXPECT_DEFAULT_VISION_MODEL", "YOLOv11n-FP-Baseline").strip()
 
 
 def expected_runtime() -> str:
     if EXPECTED_BACKEND == "rknn-yolo-worker":
-        return "phase18h-vision-worker-stabilization"
+        return "phase18j-vision-default-model-metadata-cleanup"
     if EXPECTED_BACKEND == "rknn-yolo-detect-probe":
         return "phase18g-vision-detect-output-refinement"
     if EXPECTED_BACKEND == "rknn-yolo-inference-probe":
@@ -144,6 +145,32 @@ def assert_image(image: Dict[str, Any]) -> None:
             raise AssertionError(f"missing image.preprocess.{key}: {preprocess!r}")
 
 
+def assert_direct_resize_metadata(image: Dict[str, Any]) -> None:
+    preprocess = image.get("preprocess") or {}
+    if EXPECTED_BACKEND not in {"rknn-yolo-inference-probe", "rknn-yolo-detect-probe", "rknn-yolo-worker"}:
+        return
+
+    expected = {
+        "resized_width": 640,
+        "resized_height": 640,
+        "pad_left": 0,
+        "pad_right": 0,
+        "pad_top": 0,
+        "pad_bottom": 0,
+    }
+
+    for key, value in expected.items():
+        if preprocess.get(key) != value:
+            raise AssertionError(f"expected preprocess.{key}={value!r}, got {preprocess!r}")
+
+    if "scale_x" not in preprocess or "scale_y" not in preprocess:
+        raise AssertionError(f"expected direct resize scale_x/scale_y in preprocess: {preprocess!r}")
+
+    if EXPECTED_BACKEND in {"rknn-yolo-detect-probe", "rknn-yolo-worker"}:
+        if preprocess.get("coordinate_space") != "original_image":
+            raise AssertionError(f"expected preprocess coordinate_space original_image: {preprocess!r}")
+
+
 def assert_objects(objects: Any, image: Dict[str, Any], require_non_empty: bool) -> None:
     if not isinstance(objects, list):
         raise AssertionError(f"objects must be a list: {objects!r}")
@@ -192,6 +219,7 @@ def assert_success_response(data: Dict[str, Any], model_id: Optional[str] = None
 
     image = data.get("image") or {}
     assert_latency(data.get("latency_ms") or {})
+    assert_direct_resize_metadata(data.get("image") or {})
     assert_image(image)
     assert_objects(data.get("objects"), image=image, require_non_empty=require_objects)
 

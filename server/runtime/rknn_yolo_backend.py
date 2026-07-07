@@ -104,32 +104,62 @@ class _RKNNYoloBase:
     def _build_preprocess_plan(image: Dict[str, object], target_width: int, target_height: int, phase: str) -> Dict[str, object]:
         width = max(1, int(image["width"]))
         height = max(1, int(image["height"]))
-        scale = min(target_width / width, target_height / height)
-        resized_width = int(round(width * scale))
-        resized_height = int(round(height * scale))
-        pad_x = max(0, target_width - resized_width)
-        pad_y = max(0, target_height - resized_height)
 
         method = "letterbox-metadata-only"
         note = "No pixel resize is performed in Phase 18D dry integration."
         coordinate_transform = "metadata_only"
+        coordinate_space = "model_input"
 
         if phase == "18e":
             method = "resize-nhwc-uint8-subprocess"
-            note = "Phase 18E subprocess performs cv2 resize and NHWC uint8 tensor construction."
+            note = "Phase 18E subprocess performs direct cv2 resize and NHWC uint8 tensor construction."
             coordinate_transform = "resize_stretch"
         elif phase == "18f":
             method = "resize-nhwc-uint8-subprocess-postprocess"
-            note = "Phase 18F subprocess performs cv2 resize, RKNN inference and YOLO postprocess."
+            note = "Phase 18F subprocess performs direct cv2 resize, RKNN inference and YOLO postprocess."
             coordinate_transform = "resize_stretch_input_space"
         elif phase == "18g":
             method = "resize-nhwc-uint8-subprocess-postprocess-scale-back"
             note = "Phase 18G returns bbox in original image coordinates and keeps bbox_input for model-input coordinates."
             coordinate_transform = "resize_stretch_scale_back_to_original"
-        elif phase == "18h":
+            coordinate_space = "original_image"
+        elif phase in {"18h", "18j"}:
             method = "resize-nhwc-uint8-worker-postprocess-scale-back"
-            note = "Phase 18H uses a persistent RKNN YOLO worker and returns original-image bbox coordinates."
+            note = "Phase 18J uses a persistent RKNN YOLO worker, preferred FP default model, and direct-resize metadata."
             coordinate_transform = "resize_stretch_scale_back_to_original"
+            coordinate_space = "original_image"
+
+        direct_resize = phase in {"18e", "18f", "18g", "18h", "18j"}
+
+        if direct_resize:
+            scale_x = target_width / width
+            scale_y = target_height / height
+            return {
+                "method": method,
+                "target_width": target_width,
+                "target_height": target_height,
+                "scale": None,
+                "scale_x": round(float(scale_x), 6),
+                "scale_y": round(float(scale_y), 6),
+                "resized_width": target_width,
+                "resized_height": target_height,
+                "pad_left": 0,
+                "pad_right": 0,
+                "pad_top": 0,
+                "pad_bottom": 0,
+                "input_tensor_layout": "NHWC",
+                "input_tensor_shape": [1, target_height, target_width, int(image.get("channels", 3))],
+                "input_tensor_dtype": "uint8",
+                "coordinate_transform": coordinate_transform,
+                "coordinate_space": coordinate_space,
+                "note": note,
+            }
+
+        scale = min(target_width / width, target_height / height)
+        resized_width = int(round(width * scale))
+        resized_height = int(round(height * scale))
+        pad_x = max(0, target_width - resized_width)
+        pad_y = max(0, target_height - resized_height)
 
         return {
             "method": method,
@@ -146,7 +176,7 @@ class _RKNNYoloBase:
             "input_tensor_shape": [1, target_height, target_width, int(image.get("channels", 3))],
             "input_tensor_dtype": "uint8",
             "coordinate_transform": coordinate_transform,
-            "coordinate_space": "original_image" if phase in {"18g", "18h"} else "model_input",
+            "coordinate_space": coordinate_space,
             "note": note,
         }
 
@@ -677,7 +707,7 @@ class RKNNYoloWorkerBackend(_RKNNYoloBase):
 
             preprocess_started = time.time()
             target_width, target_height = cls._target_size(model)
-            preprocess = cls._build_preprocess_plan(image, target_width, target_height, phase="18h")
+            preprocess = cls._build_preprocess_plan(image, target_width, target_height, phase="18j")
             preprocess_ms = (time.time() - preprocess_started) * 1000.0
 
             python_bin = os.environ.get("EDGEINFER_RKNN_YOLO_PYTHON", "/usr/bin/python3")

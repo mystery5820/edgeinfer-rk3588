@@ -26,6 +26,8 @@ from server.vision.image_probe import ImageProbeError
 
 router = APIRouter(prefix="/v1", tags=["vision"])
 
+DEFAULT_PREFERRED_VISION_MODEL = "YOLOv11n-FP-Baseline"
+
 
 class VisionDetectRequest(BaseModel):
     model: Optional[str] = Field(default=None)
@@ -54,7 +56,7 @@ def _vision_backend_name() -> str:
 def _vision_runtime_name() -> str:
     backend_name = _vision_backend_name()
     if backend_name == "rknn-yolo-worker":
-        return "phase18h-vision-worker-stabilization"
+        return "phase18j-vision-default-model-metadata-cleanup"
     if backend_name == "rknn-yolo-detect-probe":
         return "phase18g-vision-detect-output-refinement"
     if backend_name == "rknn-yolo-inference-probe":
@@ -107,6 +109,10 @@ def _vision_error_detail(
     }
 
 
+def _preferred_default_vision_model() -> str:
+    return os.environ.get("EDGEINFER_DEFAULT_VISION_MODEL", DEFAULT_PREFERRED_VISION_MODEL).strip() or DEFAULT_PREFERRED_VISION_MODEL
+
+
 def _resolve_vision_model(registry: ModelRegistry, model_id: Optional[str]) -> Dict[str, object]:
     if model_id:
         try:
@@ -122,7 +128,20 @@ def _resolve_vision_model(registry: ModelRegistry, model_id: Optional[str]) -> D
                 ),
             ) from exc
     else:
-        model = registry.get_default_model("object-detection")
+        preferred_id = _preferred_default_vision_model()
+        model = None
+
+        if preferred_id:
+            try:
+                preferred = registry.get_model(preferred_id)
+                if preferred.get("task") == "object-detection":
+                    model = preferred
+            except KeyError:
+                model = None
+
+        if not model:
+            model = registry.get_default_model("object-detection")
+
         if not model:
             raise HTTPException(
                 status_code=404,
@@ -302,7 +321,7 @@ def vision_detect(req: VisionDetectRequest):
                 "iou": req.iou_threshold,
             },
             "model_runtime": result.get("model_runtime"),
-            "note": "Phase 18I adds reject_when_busy vision queue protection on top of the persistent RKNN YOLO worker.",
+            "note": "Phase 18J uses a preferred FP default vision model and direct-resize preprocess metadata on top of worker and busy-rejection protection.",
             "vision": _vision_metrics_snapshot(),
         },
     }
