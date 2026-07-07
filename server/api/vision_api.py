@@ -9,6 +9,11 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 from server.model_manager.registry import ModelRegistry
+from server.scheduler.vision_queue import (
+    VisionQueueBusyError,
+    VisionQueueTimeoutError,
+    vision_queue,
+)
 from server.runtime.fake_vision_backend import FakeVisionBackend
 from server.runtime.rknn_yolo_backend import (
     RKNNYoloDetectProbeBackend,
@@ -59,7 +64,7 @@ def _vision_runtime_name() -> str:
     return "phase18c-image-input-skeleton"
 
 
-def _vision_metrics_snapshot() -> Dict[str, object]:
+def _vision_backend_metrics_snapshot() -> Dict[str, object]:
     backend_name = _vision_backend_name()
     if backend_name == "rknn-yolo-worker":
         return RKNNYoloWorkerBackend.metrics_snapshot()
@@ -70,6 +75,13 @@ def _vision_metrics_snapshot() -> Dict[str, object]:
     if backend_name == "rknn-yolo-dryrun":
         return RKNNYoloDryBackend.metrics_snapshot()
     return FakeVisionBackend.metrics_snapshot()
+
+
+def _vision_metrics_snapshot() -> Dict[str, object]:
+    return {
+        "queue": vision_queue.snapshot(),
+        "backend": _vision_backend_metrics_snapshot(),
+    }
 
 
 def _vision_error_detail(
@@ -205,12 +217,35 @@ def vision_detect(req: VisionDetectRequest):
     started = time.time()
 
     try:
-        result = _run_backend(
-            model=model,
-            image_path=image_path,
-            confidence_threshold=req.confidence_threshold,
-            iou_threshold=req.iou_threshold,
+        result = vision_queue.run_nowait(
+            lambda: _run_backend(
+                model=model,
+                image_path=image_path,
+                confidence_threshold=req.confidence_threshold,
+                iou_threshold=req.iou_threshold,
+            ),
+            model_id=str(model.get("id")),
         )
+    except VisionQueueBusyError as exc:
+        raise HTTPException(
+            status_code=429,
+            detail=_vision_error_detail(
+                code="vision_backend_busy",
+                message=str(exc),
+                model_id=str(model.get("id")),
+                retryable=True,
+            ),
+        ) from exc
+    except VisionQueueTimeoutError as exc:
+        raise HTTPException(
+            status_code=504,
+            detail=_vision_error_detail(
+                code="vision_backend_timeout",
+                message=str(exc),
+                model_id=str(model.get("id")),
+                retryable=True,
+            ),
+        ) from exc
     except FileNotFoundError as exc:
         message = str(exc)
         code = "image_not_found"
@@ -267,7 +302,7 @@ def vision_detect(req: VisionDetectRequest):
                 "iou": req.iou_threshold,
             },
             "model_runtime": result.get("model_runtime"),
-            "note": "Phase 18H adds a persistent RKNN YOLO worker while preserving Phase 18G refined detection outputs.",
+            "note": "Phase 18I adds reject_when_busy vision queue protection on top of the persistent RKNN YOLO worker.",
             "vision": _vision_metrics_snapshot(),
         },
     }

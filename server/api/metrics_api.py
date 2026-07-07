@@ -8,6 +8,7 @@ from fastapi import APIRouter
 
 from server.runtime.rkllm_backend import RKLLMBackend
 from server.scheduler.request_queue import llm_queue
+from server.scheduler.vision_queue import vision_queue
 
 router = APIRouter(prefix="/v1", tags=["metrics"])
 
@@ -61,5 +62,6 @@ def metrics():
         "process_max_rss_kb": usage.ru_maxrss,
         "rkllm_backend": backend,
         "llm": llm_queue.snapshot(),
+        "vision": vision_queue.snapshot(),
         "notes": _metrics_note(backend),
     }
