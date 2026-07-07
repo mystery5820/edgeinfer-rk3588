@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, Optional, Set
 
-RUNTIME_NAME = "phase19a-unified-inference-vlm-ready"
+RUNTIME_NAME = "phase19b-unified-response-adapter-polish"
 
 VLM_TASKS: Set[str] = {
     "vision-language",

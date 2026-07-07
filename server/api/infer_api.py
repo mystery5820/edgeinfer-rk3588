@@ -9,10 +9,17 @@ from pydantic import BaseModel, Field
 
 from server.api.vision_api import VisionDetectRequest, vision_detect
 from server.runtime.vlm_placeholder_backend import VLMPlaceholderBackend, VLM_TASKS
+from server.runtime.unified_adapters import (
+    RUNTIME_NAME as UNIFIED_RUNTIME_NAME,
+    build_unified_infer_response,
+    make_chat_completion_adapter_result,
+    make_object_detection_adapter_result,
+    to_plain_dict,
+)
 
 router = APIRouter(prefix="/v1", tags=["infer"])
 
-RUNTIME_NAME = "phase19a-unified-inference-vlm-ready"
+RUNTIME_NAME = UNIFIED_RUNTIME_NAME
 
 TEXT_GENERATION_TASKS = {"text-generation", "chat-completion"}
 VISION_TASKS = {"object-detection"}
@@ -132,18 +139,14 @@ def _dispatch_object_detection(req: UnifiedInferRequest, task: str) -> Dict[str,
     )
 
     output = vision_detect(vision_req)
-    output_edgeinfer = output.get("edgeinfer", {}) if isinstance(output, dict) else {}
+    raw_output = to_plain_dict(output)
 
-    return _success_response(
-        task=task,
-        model=output.get("model", req.model) if isinstance(output, dict) else req.model,
-        route="/v1/vision/detect",
-        backend=output_edgeinfer.get("backend", "vision-adapter"),
-        output=output,
-        extra={
-            "task_adapter": "vision-detect",
-            "source_runtime": output_edgeinfer.get("runtime"),
-        },
+    return build_unified_infer_response(
+        make_object_detection_adapter_result(
+            task=task,
+            requested_model=req.model,
+            raw_output=raw_output,
+        )
     )
 
 
@@ -239,14 +242,14 @@ def _dispatch_text_generation(req: UnifiedInferRequest, task: str) -> Dict[str, 
         ) from exc
 
     output = handler(chat_req)
+    raw_output = to_plain_dict(output)
 
-    return _success_response(
-        task=task,
-        model=payload.get("model"),
-        route="/v1/chat/completions",
-        backend="llm-adapter",
-        output=output,
-        extra={"task_adapter": "chat-completions", "stream_wrapped": False},
+    return build_unified_infer_response(
+        make_chat_completion_adapter_result(
+            task=task,
+            requested_model=payload.get("model"),
+            raw_output=raw_output,
+        )
     )
 
 

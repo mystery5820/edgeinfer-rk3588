@@ -486,3 +486,20 @@ Host/Board 自动化部署与验收
 ```text
 Phase 13：项目工程化整理与对外展示
 ```
+
+
+## Phase 19B：Unified Inference Response and Adapter Polish
+
+Phase 19B 在 Phase 19A `/v1/infer` 统一推理入口基础上，进一步规范统一响应结构：
+
+- `output.summary`：面向用户和前端的简要结果；
+- `output.data`：标准化后的核心任务输出；
+- `output.raw`：保留原任务后端完整响应，方便调试和回归；
+- `edgeinfer.dispatch`：记录 task adapter、source endpoint、backend 和 source runtime。
+
+详细文档见：
+
+```text
+docs/phase19b_unified_response_adapter_polish.md
+```
+

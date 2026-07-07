@@ -41,4 +41,6 @@ def root():
         "metrics": "/v1/metrics",
         "chat": "/v1/chat/completions",
         "vision_detect": "/v1/vision/detect",
+        "infer": "/v1/infer",
+        "infer_tasks": "/v1/infer/tasks",
     }
