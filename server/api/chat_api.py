@@ -19,6 +19,11 @@ from server.scheduler.request_queue import (
     LLMQueueTimeoutError,
     llm_queue,
 )
+from server.scheduler.npu_resource_guard import (
+    NPUResourceBusyError,
+    npu_resource_error_detail,
+    npu_resource_guard,
+)
 
 router = APIRouter(prefix="/v1", tags=["chat"])
 
@@ -516,6 +521,35 @@ async def _stream_chat_completion(
 
 
 
+async def _generate_with_npu_guard(
+    *,
+    backend: RKLLMBackend,
+    prompt: str,
+    model: Dict[str, object],
+    model_id: str,
+    max_new_tokens: int,
+) -> str:
+    lease = npu_resource_guard.acquire_nowait(
+        task="text-generation",
+        owner="chat-completions",
+        model_id=model_id,
+    )
+
+    try:
+        result = await backend.generate(
+            prompt=prompt,
+            model=model,
+            max_new_tokens=max_new_tokens,
+            timeout_seconds=LLM_TIMEOUT_SECONDS,
+        )
+    except Exception as exc:
+        lease.finish_error(exc)
+        raise
+    else:
+        lease.finish_success()
+        return result
+
+
 @router.post("/chat/completions")
 async def chat_completions(req: ChatCompletionRequest):
     _validate_n(req)
@@ -569,11 +603,12 @@ async def chat_completions(req: ChatCompletionRequest):
 
     try:
         result = await llm_queue.run_nowait(
-            lambda: backend.generate(
+            lambda: _generate_with_npu_guard(
+                backend=backend,
                 prompt=prompt,
                 model=model,
+                model_id=str(model_id),
                 max_new_tokens=effective_max_new_tokens,
-                timeout_seconds=LLM_TIMEOUT_SECONDS,
             ),
             timeout_seconds=LLM_TIMEOUT_SECONDS + 10,
             model_id=model_id,
@@ -598,6 +633,15 @@ async def chat_completions(req: ChatCompletionRequest):
                 retryable=True,
             ),
         )
+    except NPUResourceBusyError as e:
+        raise HTTPException(
+            status_code=429,
+            detail=npu_resource_error_detail(
+                task="text-generation",
+                owner="chat-completions",
+                model_id=str(model_id),
+            ),
+        ) from e
     except RuntimeError as e:
         raise HTTPException(
             status_code=502,

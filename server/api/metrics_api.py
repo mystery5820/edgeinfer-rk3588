@@ -9,6 +9,7 @@ from fastapi import APIRouter
 from server.runtime.rkllm_backend import RKLLMBackend
 from server.scheduler.request_queue import llm_queue
 from server.scheduler.vision_queue import vision_queue
+from server.scheduler.npu_resource_guard import npu_resource_guard
 
 router = APIRouter(prefix="/v1", tags=["metrics"])
 
@@ -63,5 +64,6 @@ def metrics():
         "rkllm_backend": backend,
         "llm": llm_queue.snapshot(),
         "vision": vision_queue.snapshot(),
+        "npu_resource": npu_resource_guard.snapshot(),
         "notes": _metrics_note(backend),
     }

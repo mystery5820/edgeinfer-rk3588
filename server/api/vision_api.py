@@ -14,6 +14,11 @@ from server.scheduler.vision_queue import (
     VisionQueueTimeoutError,
     vision_queue,
 )
+from server.scheduler.npu_resource_guard import (
+    NPUResourceBusyError,
+    npu_resource_error_detail,
+    npu_resource_guard,
+)
 from server.runtime.fake_vision_backend import FakeVisionBackend
 from server.runtime.rknn_yolo_backend import (
     RKNNYoloDetectProbeBackend,
@@ -216,6 +221,35 @@ def _run_backend(
     )
 
 
+def _run_backend_with_npu_guard(
+    *,
+    model: Dict[str, object],
+    image_path: str,
+    confidence_threshold: float,
+    iou_threshold: float,
+) -> Dict[str, object]:
+    model_id = str(model.get("id"))
+    lease = npu_resource_guard.acquire_nowait(
+        task="object-detection",
+        owner="vision-detect",
+        model_id=model_id,
+    )
+
+    try:
+        result = _run_backend(
+            model=model,
+            image_path=image_path,
+            confidence_threshold=confidence_threshold,
+            iou_threshold=iou_threshold,
+        )
+    except Exception as exc:
+        lease.finish_error(exc)
+        raise
+    else:
+        lease.finish_success()
+        return result
+
+
 @router.post("/vision/detect")
 def vision_detect(req: VisionDetectRequest):
     registry = ModelRegistry()
@@ -237,7 +271,7 @@ def vision_detect(req: VisionDetectRequest):
 
     try:
         result = vision_queue.run_nowait(
-            lambda: _run_backend(
+            lambda: _run_backend_with_npu_guard(
                 model=model,
                 image_path=image_path,
                 confidence_threshold=req.confidence_threshold,
@@ -263,6 +297,15 @@ def vision_detect(req: VisionDetectRequest):
                 message=str(exc),
                 model_id=str(model.get("id")),
                 retryable=True,
+            ),
+        ) from exc
+    except NPUResourceBusyError as exc:
+        raise HTTPException(
+            status_code=429,
+            detail=npu_resource_error_detail(
+                task="object-detection",
+                owner="vision-detect",
+                model_id=str(model.get("id")),
             ),
         ) from exc
     except FileNotFoundError as exc:
