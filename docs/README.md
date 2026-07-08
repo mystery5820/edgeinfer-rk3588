@@ -168,3 +168,9 @@ docs/phase19b_unified_response_adapter_polish.md
 - Document: [`phase22_qwen3_vl_backend.md`](phase22_qwen3_vl_backend.md)
 - Adds a real Qwen3-VL RKNN + RKLLM backend for `/v1/infer` VLM tasks.
 - Validates `vision-language` inference with board-side image input and global NPU guard protection.
+
+## Phase 23: Qwen3-VL Backend Hardening & Benchmark
+
+- Document: [`phase23_qwen3_vl_hardening_benchmark.md`](phase23_qwen3_vl_hardening_benchmark.md)
+- Adds VLM global NPU guard validation.
+- Confirms Qwen3-VL inference returns `npu_resource_busy` to competing NPU workloads while the VLM backend owns the resource.

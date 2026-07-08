@@ -514,3 +514,15 @@ See: [`docs/phase20_global_npu_resource_guard.md`](docs/phase20_global_npu_resou
 Phase 22 replaces the VLM placeholder with a real Qwen3-VL backend on RK3588. The service now routes VLM tasks through a RKNN vision encoder and RKLLM decoder and exposes the result through `/v1/infer`.
 
 See: [`docs/phase22_qwen3_vl_backend.md`](docs/phase22_qwen3_vl_backend.md)
+
+## Phase 23: Qwen3-VL Backend Hardening & Benchmark
+
+Phase 23 hardens the real Qwen3-VL backend by validating that VLM inference participates in the global RK3588 NPU resource guard and by preparing repeatable VLM benchmark workflows.
+
+See: [`docs/phase23_qwen3_vl_hardening_benchmark.md`](docs/phase23_qwen3_vl_hardening_benchmark.md)
+
+Qwen3-VL benchmark:
+
+```bash
+python3 scripts/host/benchmark_qwen3_vl.py --quick
+```
