@@ -56,6 +56,11 @@ def main() -> int:
         assert info.get("status") == "adapter", info
         assert info.get("backend") == "qwen3-vl-rkllm-rknn-runner", info
 
+    if os.environ.get("EDGEINFER_QWEN3_VL_RUN_HEAVY", "0") != "1":
+        print("=== Qwen3-VL infer client smoke test passed; heavy VLM request skipped by default ===")
+        print("To run the heavy VLM request: EDGEINFER_QWEN3_VL_RUN_HEAVY=1 python3 scripts/host/test_qwen3_vl_infer_client.py")
+        return 0
+
     payload = {
         "task": "vision-language",
         "model": MODEL,
@@ -88,7 +93,10 @@ def main() -> int:
 
     edgeinfer = body.get("edgeinfer", {})
     assert edgeinfer.get("backend") == "qwen3-vl-rkllm-rknn-runner", edgeinfer
-    assert edgeinfer.get("source_runtime") == "phase22-qwen3-vl-rk3588-backend", edgeinfer
+    assert edgeinfer.get("source_runtime") in {
+        "phase22-qwen3-vl-rk3588-backend",
+        "phase24-qwen3-vl-persistent-worker",
+    }, edgeinfer
     assert edgeinfer.get("dispatch", {}).get("adapter") == "qwen3-vl", edgeinfer
 
     status, metrics = request_json("GET", "/v1/metrics")

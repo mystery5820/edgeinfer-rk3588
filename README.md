@@ -526,3 +526,5 @@ Qwen3-VL benchmark:
 ```bash
 python3 scripts/host/benchmark_qwen3_vl.py --quick
 ```
+
+- Phase 24: Qwen3-VL persistent worker backend, reusing `VLM_NPU_WORKER` for lower-latency VLM inference and guarded multi-image requests.

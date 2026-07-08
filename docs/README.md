@@ -174,3 +174,5 @@ docs/phase19b_unified_response_adapter_polish.md
 - Document: [`phase23_qwen3_vl_hardening_benchmark.md`](phase23_qwen3_vl_hardening_benchmark.md)
 - Adds VLM global NPU guard validation.
 - Confirms Qwen3-VL inference returns `npu_resource_busy` to competing NPU workloads while the VLM backend owns the resource.
+
+- Phase 24: Qwen3-VL persistent worker backend, reusing `VLM_NPU_WORKER` for lower-latency VLM inference and guarded multi-image requests.

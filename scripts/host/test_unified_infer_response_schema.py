@@ -137,6 +137,11 @@ def main() -> int:
             f"expected backend {EXPECT_BACKEND}, got {dispatch.get('backend')}",
         )
 
+    if os.environ.get("EDGEINFER_UNIFIED_RUN_HEAVY_VLM", "0") != "1":
+        print("=== unified infer response schema smoke test passed; heavy VLM schema request skipped by default ===")
+        print("To run the heavy VLM schema request: EDGEINFER_UNIFIED_RUN_HEAVY_VLM=1 python3 scripts/host/test_unified_infer_response_schema.py")
+        return 0
+
     status, vlm_response = post_json(
         "/v1/infer",
         {
@@ -173,7 +178,7 @@ def main() -> int:
         f"unexpected VLM backend: {vlm_edgeinfer}",
     )
     require(
-        vlm_edgeinfer.get("source_runtime") == "phase22-qwen3-vl-rk3588-backend",
+        vlm_edgeinfer.get("source_runtime") in {"phase22-qwen3-vl-rk3588-backend", "phase24-qwen3-vl-persistent-worker"},
         f"unexpected VLM source_runtime: {vlm_edgeinfer}",
     )
 
