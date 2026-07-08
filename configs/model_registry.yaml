@@ -49,6 +49,18 @@ models:
     input_size: [640, 640]
     status: ready
 
+  - name: Qwen3-VL-2B-Instruct-RKLLM-v1.2.3
+    task: vision-language
+    backend: qwen3-vl-rkllm-rknn-runner
+    source_dir: models/vlm/qwen3-vl-2b-instruct-rkllm-v123
+    vision_model: /userdata/edgeinfer-assets/models/vlm/qwen3-vl-2b-instruct-rkllm-v123/qwen3-vl-2b_vision_672_rk3588.rknn
+    runtime_model: /userdata/edgeinfer-assets/models/vlm/qwen3-vl-2b-instruct-rkllm-v123/qwen3-vl-2b-instruct_w8a8_rk3588.rkllm
+    quantization: W8A8
+    vision_encoder_input: [672, 672]
+    max_context: 1024
+    status: ready
+    note: "Qwen3-VL-2B true VLM backend validated on RK3588 with RKNN vision encoder and RKLLM decoder."
+
 # Qwen3-4B RKLLM board validation notes
 qwen3_4b_rkllm_status:
   all_npu:

@@ -508,3 +508,9 @@ docs/phase19b_unified_response_adapter_polish.md
 Phase 20 adds a global RK3588 NPU resource guard above the existing LLM and Vision queues. It prevents cross-task NPU contention between RKLLM text generation and RKNN YOLO object detection, exposes `npu_resource` metrics under `/v1/metrics`, and adds a host regression test for both directions of contention.
 
 See: [`docs/phase20_global_npu_resource_guard.md`](docs/phase20_global_npu_resource_guard.md)
+
+## Phase 22: Qwen3-VL RK3588 Backend MVP
+
+Phase 22 replaces the VLM placeholder with a real Qwen3-VL backend on RK3588. The service now routes VLM tasks through a RKNN vision encoder and RKLLM decoder and exposes the result through `/v1/infer`.
+
+See: [`docs/phase22_qwen3_vl_backend.md`](docs/phase22_qwen3_vl_backend.md)

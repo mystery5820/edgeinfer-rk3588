@@ -162,3 +162,9 @@ docs/phase19b_unified_response_adapter_polish.md
 - Document: [`phase20_global_npu_resource_guard.md`](phase20_global_npu_resource_guard.md)
 - Adds a global NPU resource guard across LLM and Vision requests.
 - Preserves same-task queue behavior while rejecting cross-task contention with `npu_resource_busy`.
+
+## Phase 22: Qwen3-VL RK3588 Backend MVP
+
+- Document: [`phase22_qwen3_vl_backend.md`](phase22_qwen3_vl_backend.md)
+- Adds a real Qwen3-VL RKNN + RKLLM backend for `/v1/infer` VLM tasks.
+- Validates `vision-language` inference with board-side image input and global NPU guard protection.

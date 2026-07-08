@@ -141,17 +141,49 @@ def main() -> int:
         "/v1/infer",
         {
             "task": "vision-language",
-            "model": "future-vlm-model",
+            "model": "qwen3-vl-2b-instruct-rkllm-v123",
             "input": {
                 "image_path": IMAGE_PATH,
-                "text": "What is in this image?",
+                "prompt": "<image> What is in this image?",
+            },
+            "parameters": {
+                "max_new_tokens": 64,
+                "context_length": 1024,
+                "timeout_seconds": 240,
             },
         },
     )
-    require(status == 501, f"vision-language placeholder should return 501, got {status}")
+    require(status == 200, f"vision-language should return 200 after Phase 22, got {status}: {vlm_response}")
+    require(vlm_response.get("object") == "edgeinfer.inference", "VLM response object mismatch")
+    require(vlm_response.get("task") == "vision-language", "VLM task mismatch")
+
+    vlm_output = vlm_response.get("output")
+    require(isinstance(vlm_output, dict), "VLM output must be dict")
+    require(isinstance(vlm_output.get("summary"), dict), "VLM output.summary must be dict")
+    require(isinstance(vlm_output.get("data"), dict), "VLM output.data must be dict")
+    require(isinstance(vlm_output.get("raw"), dict), "VLM output.raw must be dict")
+
+    vlm_answer = vlm_output["summary"].get("answer")
+    require(isinstance(vlm_answer, str) and len(vlm_answer.strip()) > 0, "VLM answer missing")
+
+    vlm_edgeinfer = vlm_response.get("edgeinfer")
+    require(isinstance(vlm_edgeinfer, dict), "VLM edgeinfer must be dict")
     require(
-        vlm_response.get("detail", {}).get("error", {}).get("code") == "vlm_backend_not_ready",
-        f"unexpected VLM error payload: {vlm_response}",
+        vlm_edgeinfer.get("backend") == "qwen3-vl-rkllm-rknn-runner",
+        f"unexpected VLM backend: {vlm_edgeinfer}",
+    )
+    require(
+        vlm_edgeinfer.get("source_runtime") == "phase22-qwen3-vl-rk3588-backend",
+        f"unexpected VLM source_runtime: {vlm_edgeinfer}",
+    )
+
+    vlm_dispatch = vlm_edgeinfer.get("dispatch")
+    require(isinstance(vlm_dispatch, dict), "VLM edgeinfer.dispatch must be dict")
+    require(vlm_dispatch.get("task") == "vision-language", "VLM dispatch.task mismatch")
+    require(vlm_dispatch.get("adapter") == "qwen3-vl", "VLM dispatch.adapter mismatch")
+    require(
+        vlm_dispatch.get("backend") == "qwen3-vl-rkllm-rknn-runner",
+        "VLM dispatch.backend mismatch",
     )
 
     status, unsupported = post_json(

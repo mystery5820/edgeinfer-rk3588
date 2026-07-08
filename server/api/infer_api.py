@@ -9,6 +9,8 @@ from pydantic import BaseModel, Field
 
 from server.api.vision_api import VisionDetectRequest, vision_detect
 from server.runtime.vlm_placeholder_backend import VLMPlaceholderBackend, VLM_TASKS
+from server.runtime.qwen3_vl_backend import Qwen3VLBackend, Qwen3VLBackendError
+from server.scheduler.npu_resource_guard import NPUResourceBusyError, npu_resource_error_detail
 from server.runtime.unified_adapters import (
     RUNTIME_NAME as UNIFIED_RUNTIME_NAME,
     build_unified_infer_response,
@@ -150,6 +152,159 @@ def _dispatch_object_detection(req: UnifiedInferRequest, task: str) -> Dict[str,
     )
 
 
+
+def _int_param(task: str, parameters: Dict[str, Any], key: str, default: int) -> int:
+    value = parameters.get(key, default)
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        raise HTTPException(
+            status_code=400,
+            detail=_error_detail(
+                code="invalid_parameter",
+                message=f"{key} must be an integer",
+                task=task,
+                backend="qwen3-vl-adapter",
+                retryable=False,
+                extra={"parameter": key, "value": value},
+            ),
+        )
+
+
+def _vlm_prompt_from_request(req: UnifiedInferRequest, task: str) -> str:
+    input_data = req.input or {}
+
+    for key in ("prompt", "text", "question"):
+        value = input_data.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+
+    if task == "image-captioning":
+        return "Describe this image in one sentence."
+
+    if task == "visual-question-answering":
+        raise HTTPException(
+            status_code=400,
+            detail=_error_detail(
+                code="invalid_vlm_input",
+                message="visual-question-answering input.question or input.prompt must be a non-empty string",
+                task=task,
+                backend="qwen3-vl-adapter",
+            ),
+        )
+
+    return "Describe this image in one sentence."
+
+
+def _vlm_image_path_from_request(req: UnifiedInferRequest, task: str) -> str:
+    input_data = req.input or {}
+
+    image_path = input_data.get("image_path")
+    if isinstance(image_path, str) and image_path.strip():
+        return image_path.strip()
+
+    image = input_data.get("image")
+    if isinstance(image, dict):
+        path = image.get("path")
+        if isinstance(path, str) and path.strip():
+            return path.strip()
+
+    raise HTTPException(
+        status_code=400,
+        detail=_error_detail(
+            code="invalid_vlm_input",
+            message="VLM input.image_path must be a non-empty board-side image path",
+            task=task,
+            backend="qwen3-vl-adapter",
+        ),
+    )
+
+
+def _dispatch_vlm(req: UnifiedInferRequest, task: str) -> Dict[str, Any]:
+    parameters = req.parameters or {}
+    image_path = _vlm_image_path_from_request(req, task)
+    prompt = _vlm_prompt_from_request(req, task)
+
+    backend = Qwen3VLBackend()
+    model_id = req.model or req.input.get("model") or backend.default_model_id()
+
+    try:
+        raw_output = backend.generate(
+            task=task,
+            image_path=image_path,
+            prompt=prompt,
+            model_id=str(model_id),
+            max_new_tokens=_int_param(task, parameters, "max_new_tokens", 64),
+            context_length=_int_param(task, parameters, "context_length", 1024),
+            timeout_seconds=_int_param(task, parameters, "timeout_seconds", 180),
+        )
+    except NPUResourceBusyError as exc:
+        raise HTTPException(
+            status_code=429,
+            detail=npu_resource_error_detail(
+                task=task,
+                owner="qwen3-vl",
+                model_id=str(model_id),
+            ),
+        ) from exc
+    except Qwen3VLBackendError as exc:
+        raise HTTPException(
+            status_code=exc.status_code,
+            detail=_error_detail(
+                code=exc.code,
+                message=exc.message,
+                task=task,
+                backend=Qwen3VLBackend.backend_name(),
+                retryable=exc.retryable,
+                extra=exc.extra,
+            ),
+        ) from exc
+
+    answer = str(raw_output.get("answer", ""))
+    latency_ms = raw_output.get("latency_ms")
+
+    output = {
+        "summary": {
+            "type": task,
+            "answer": answer,
+            "latency_ms": latency_ms,
+            "image": raw_output.get("image"),
+            "model": raw_output.get("model"),
+        },
+        "data": {
+            "answer": answer,
+            "prompt": raw_output.get("prompt"),
+            "image": raw_output.get("image"),
+        },
+        "raw": raw_output,
+    }
+
+    return {
+        "id": _new_id(),
+        "object": "edgeinfer.inference",
+        "created": int(time.time()),
+        "task": task,
+        "model": raw_output.get("model"),
+        "output": output,
+        "edgeinfer": {
+            "task": task,
+            "route": "/v1/infer",
+            "backend": Qwen3VLBackend.backend_name(),
+            "runtime": RUNTIME_NAME,
+            "source_endpoint": "/v1/infer",
+            "task_adapter": "qwen3-vl",
+            "source_runtime": Qwen3VLBackend.runtime_name(),
+            "dispatch": {
+                "task": task,
+                "adapter": "qwen3-vl",
+                "source_endpoint": "/v1/infer",
+                "backend": Qwen3VLBackend.backend_name(),
+                "source_runtime": Qwen3VLBackend.runtime_name(),
+            },
+            "note": "Phase 22 routes VLM tasks to a real Qwen3-VL RKNN+RKLLM backend on RK3588.",
+        },
+    }
+
 def _messages_from_input(input_data: Dict[str, Any]) -> List[Dict[str, Any]]:
     messages = input_data.get("messages")
     if isinstance(messages, list) and messages:
@@ -272,27 +427,27 @@ def list_unified_infer_tasks() -> Dict[str, Any]:
                 "aliases": sorted(VISION_TASKS),
             },
             "vision-language": {
-                "status": "placeholder",
-                "backend": VLMPlaceholderBackend.backend_name(),
-                "source_endpoint": None,
+                "status": "adapter",
+                "backend": Qwen3VLBackend.backend_name(),
+                "source_endpoint": "/v1/infer",
             },
             "image-captioning": {
-                "status": "placeholder",
-                "backend": VLMPlaceholderBackend.backend_name(),
-                "source_endpoint": None,
+                "status": "adapter",
+                "backend": Qwen3VLBackend.backend_name(),
+                "source_endpoint": "/v1/infer",
             },
             "visual-question-answering": {
-                "status": "placeholder",
-                "backend": VLMPlaceholderBackend.backend_name(),
-                "source_endpoint": None,
+                "status": "adapter",
+                "backend": Qwen3VLBackend.backend_name(),
+                "source_endpoint": "/v1/infer",
             },
             "multimodal-chat": {
-                "status": "placeholder",
-                "backend": VLMPlaceholderBackend.backend_name(),
-                "source_endpoint": None,
+                "status": "adapter",
+                "backend": Qwen3VLBackend.backend_name(),
+                "source_endpoint": "/v1/infer",
             },
         },
-        "note": "VLM tasks are planned first-class tasks and return 501 until a VLM backend is implemented.",
+        "note": "Phase 22 enables real Qwen3-VL RKNN+RKLLM backend for VLM tasks on RK3588.",
     }
 
 
@@ -315,6 +470,9 @@ def unified_infer(req: UnifiedInferRequest) -> Dict[str, Any]:
 
     if task in TEXT_GENERATION_TASKS:
         return _dispatch_text_generation(req, task)
+
+    if task in VLM_TASKS:
+        return _dispatch_vlm(req, task)
 
     if task in VLM_TASKS:
         raise HTTPException(
